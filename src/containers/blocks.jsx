@@ -571,12 +571,38 @@ class Blocks extends React.Component {
         } = this.props;
         /* eslint-enable no-unused-vars */
         return (
-            <React.Fragment>
+            <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                {/* Gemini Expand Bar at bottom */}
+                <div
+                    onClick={() => console.log("Gemini expand clicked")}
+                    style={{
+                        position: 'absolute',
+                        bottom: '10px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        backgroundColor: '#4B90FF',
+                        color: 'white',
+                        padding: '10px 20px',
+                        borderTopLeftRadius: '12px',
+                        borderTopRightRadius: '12px',
+                        boxShadow: '0 -2px 6px rgba(0,0,0,0.2)',
+                        fontWeight: 'bold',
+                        fontSize: '16px',
+                        zIndex: 1000,
+                        cursor: 'pointer'
+                    }}
+                >
+                    ▲ Gemini Chat
+                </div>
+        
+                {/* Blocks workspace */}
                 <DroppableBlocks
                     componentRef={this.setBlocks}
                     onDrop={this.handleDrop}
                     {...props}
                 />
+        
+                {/* Prompt modal */}
                 {this.state.prompt ? (
                     <Prompt
                         defaultValue={this.state.prompt.defaultValue}
@@ -591,6 +617,8 @@ class Blocks extends React.Component {
                         onOk={this.handlePromptCallback}
                     />
                 ) : null}
+        
+                {/* Extension Library modal */}
                 {extensionLibraryVisible ? (
                     <ExtensionLibrary
                         vm={vm}
@@ -598,16 +626,17 @@ class Blocks extends React.Component {
                         onRequestClose={onRequestCloseExtensionLibrary}
                     />
                 ) : null}
+        
+                {/* Custom Procedures modal */}
                 {customProceduresVisible ? (
                     <CustomProcedures
-                        options={{
-                            media: options.media
-                        }}
+                        options={{ media: options.media }}
                         onRequestClose={this.handleCustomProceduresClose}
                     />
                 ) : null}
-            </React.Fragment>
+            </div>
         );
+        
     }
 }
 
