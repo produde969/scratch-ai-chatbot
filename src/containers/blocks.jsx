@@ -572,26 +572,30 @@ class Blocks extends React.Component {
         /* eslint-enable no-unused-vars */
         return (
             <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-                {/* Gemini Expand Bar at bottom */}
+                {/* Gemini Expand Bar at top */}
                 <div
                     onClick={() => console.log("Gemini expand clicked")}
                     style={{
                         position: 'absolute',
-                        bottom: 0,
-                        left: 311,
-                        right: 50,
+                        top: 0,
+                        left: 311.5,
+                        right: 0,
                         backgroundColor: '#4B90FF',
                         color: 'white',
                         padding: '12px 0',
                         textAlign: 'center',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
                         fontWeight: 'bold',
                         fontSize: '16px',
                         zIndex: 1000,
                         cursor: 'pointer',
-                        boxShadow: '0 -2px 6px rgba(0,0,0,0.2)'
+                        borderTopLeftRadius: '6px',
+                        borderTopRightRadius: '6px',
+                        borderBottomLeftRadius: '18px',
+                        borderBottomRightRadius: '18px'
                     }}
                 >
-                    ▲ Gemini Chat
+                    ▼ Gemini Chat
                 </div>
         
                 {/* Blocks workspace */}
@@ -635,7 +639,7 @@ class Blocks extends React.Component {
                 ) : null}
             </div>
         );
-        
+
     }
 }
 
