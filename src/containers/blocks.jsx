@@ -577,19 +577,18 @@ class Blocks extends React.Component {
                     onClick={() => console.log("Gemini expand clicked")}
                     style={{
                         position: 'absolute',
-                        bottom: '10px',
-                        left: '50%',
-                        transform: 'translateX(-50%)',
+                        bottom: 0,
+                        left: 311,
+                        right: 50,
                         backgroundColor: '#4B90FF',
                         color: 'white',
-                        padding: '10px 20px',
-                        borderTopLeftRadius: '12px',
-                        borderTopRightRadius: '12px',
-                        boxShadow: '0 -2px 6px rgba(0,0,0,0.2)',
+                        padding: '12px 0',
+                        textAlign: 'center',
                         fontWeight: 'bold',
                         fontSize: '16px',
                         zIndex: 1000,
-                        cursor: 'pointer'
+                        cursor: 'pointer',
+                        boxShadow: '0 -2px 6px rgba(0,0,0,0.2)'
                     }}
                 >
                     ▲ Gemini Chat
