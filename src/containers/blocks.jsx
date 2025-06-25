@@ -21,7 +21,7 @@ import defineDynamicBlock from '../lib/define-dynamic-block';
 import {DEFAULT_THEME, getColorsForTheme, themeMap} from '../lib/themes';
 import {injectExtensionBlockTheme, injectExtensionCategoryTheme} from '../lib/themes/blockHelpers';
 
-import {connect} from 'react-redux';
+import {connect} from 'react-redux'; // Make sure connect is imported
 import {updateToolbox} from '../reducers/toolbox';
 import {activateColorPicker} from '../reducers/color-picker';
 import {closeExtensionLibrary, openSoundRecorder, openConnectionModal} from '../reducers/modals';
@@ -77,14 +77,16 @@ class Blocks extends React.Component {
             'onWorkspaceUpdate',
             'onWorkspaceMetricsChange',
             'setBlocks',
-            'setLocale'
+            'setLocale',
+            'toggleGeminiChat'
         ]);
         this.ScratchBlocks.prompt = this.handlePromptStart;
         this.ScratchBlocks.statusButtonCallback = this.handleConnectionModalStart;
         this.ScratchBlocks.recordSoundCallback = this.handleOpenSoundRecorder;
 
         this.state = {
-            prompt: null
+            prompt: null,
+            showGeminiChat: false
         };
         this.onTargetsUpdate = debounce(this.onTargetsUpdate, 100);
         this.toolboxUpdateQueue = [];
@@ -106,9 +108,6 @@ class Blocks extends React.Component {
         );
         this.workspace = this.ScratchBlocks.inject(this.blocks, workspaceConfig);
 
-        // Register buttons under new callback keys for creating variables,
-        // lists, and procedures from extensions.
-
         const toolboxWorkspace = this.workspace.getFlyout().getWorkspace();
 
         const varListButtonCallback = type =>
@@ -121,26 +120,17 @@ class Blocks extends React.Component {
         toolboxWorkspace.registerButtonCallback('MAKE_A_LIST', varListButtonCallback('list'));
         toolboxWorkspace.registerButtonCallback('MAKE_A_PROCEDURE', procButtonCallback);
 
-        // Store the xml of the toolbox that is actually rendered.
-        // This is used in componentDidUpdate instead of prevProps, because
-        // the xml can change while e.g. on the costumes tab.
         this._renderedToolboxXML = this.props.toolboxXML;
 
-        // we actually never want the workspace to enable "refresh toolbox" - this basically re-renders the
-        // entire toolbox every time we reset the workspace.  We call updateToolbox as a part of
-        // componentDidUpdate so the toolbox will still correctly be updated
         this.setToolboxRefreshEnabled = this.workspace.setToolboxRefreshEnabled.bind(this.workspace);
         this.workspace.setToolboxRefreshEnabled = () => {
             this.setToolboxRefreshEnabled(false);
         };
 
-        // @todo change this when blockly supports UI events
         addFunctionListener(this.workspace, 'translate', this.onWorkspaceMetricsChange);
         addFunctionListener(this.workspace, 'zoom', this.onWorkspaceMetricsChange);
 
         this.attachVM();
-        // Only update blocks/vm locale when visible to avoid sizing issues
-        // If locale changes while not visible it will get handled in didUpdate
         if (this.props.isVisible) {
             this.setLocale();
         }
@@ -154,36 +144,30 @@ class Blocks extends React.Component {
             this.props.customProceduresVisible !== nextProps.customProceduresVisible ||
             this.props.locale !== nextProps.locale ||
             this.props.anyModalVisible !== nextProps.anyModalVisible ||
-            this.props.stageSize !== nextProps.stageSize
+            this.props.stageSize !== nextProps.stageSize ||
+            this.state.showGeminiChat !== nextState.showGeminiChat
         );
     }
     componentDidUpdate (prevProps) {
-        // If any modals are open, call hideChaff to close z-indexed field editors
+        
         if (this.props.anyModalVisible && !prevProps.anyModalVisible) {
             this.ScratchBlocks.hideChaff();
         }
 
-        // Only rerender the toolbox when the blocks are visible and the xml is
-        // different from the previously rendered toolbox xml.
-        // Do not check against prevProps.toolboxXML because that may not have been rendered.
         if (this.props.isVisible && this.props.toolboxXML !== this._renderedToolboxXML) {
             this.requestToolboxUpdate();
         }
 
         if (this.props.isVisible === prevProps.isVisible) {
             if (this.props.stageSize !== prevProps.stageSize) {
-                // force workspace to redraw for the new stage size
                 window.dispatchEvent(new Event('resize'));
             }
             return;
         }
-        // @todo hack to resize blockly manually in case resize happened while hidden
-        // @todo hack to reload the workspace due to gui bug #413
-        if (this.props.isVisible) { // Scripts tab
+
+        if (this.props.isVisible) {
             this.workspace.setVisible(true);
             if (prevProps.locale !== this.props.locale || this.props.locale !== this.props.vm.getLocale()) {
-                // call setLocale if the locale has changed, or changed while the blocks were hidden.
-                // vm.getLocale() will be out of sync if locale was changed while not visible
                 this.setLocale();
             } else {
                 this.props.vm.refreshWorkspace();
@@ -199,8 +183,6 @@ class Blocks extends React.Component {
         this.detachVM();
         this.workspace.dispose();
         clearTimeout(this.toolboxUpdateTimeout);
-
-        // Clear the flyout blocks so that they can be recreated on mount.
         this.props.vm.clearFlyoutBlocks();
     }
     requestToolboxUpdate () {
@@ -230,9 +212,6 @@ class Blocks extends React.Component {
         this.workspace.updateToolbox(this.props.toolboxXML);
         this._renderedToolboxXML = this.props.toolboxXML;
 
-        // In order to catch any changes that mutate the toolbox during "normal runtime"
-        // (variable changes/etc), re-enable toolbox refresh.
-        // Using the setter function will rerender the entire toolbox which we just rendered.
         this.workspace.toolboxRefreshEnabled_ = true;
 
         const currentCategoryPos = this.workspace.toolbox_.getCategoryPositionById(categoryId);
@@ -249,7 +228,6 @@ class Blocks extends React.Component {
     }
 
     withToolboxUpdates (fn) {
-        // if there is a queued toolbox update, we need to wait
         if (this.toolboxUpdateTimeout) {
             this.toolboxUpdateQueue.push(fn);
         } else {
@@ -315,9 +293,6 @@ class Blocks extends React.Component {
     onWorkspaceMetricsChange () {
         const target = this.props.vm.editingTarget;
         if (target && target.id) {
-            // Dispatch updateMetrics later, since onWorkspaceMetricsChange may be (very indirectly)
-            // called from a reducer, i.e. when you create a custom procedure.
-            // TODO: Is this a vehement hack?
             setTimeout(() => {
                 this.props.updateMetrics({
                     targetID: target.id,
@@ -344,13 +319,10 @@ class Blocks extends React.Component {
         this.workspace.reportValue(data.id, data.value);
     }
     getToolboxXML () {
-        // Use try/catch because this requires digging pretty deep into the VM
-        // Code inside intentionally ignores several error situations (no stage, etc.)
-        // Because they would get caught by this try/catch
         try {
             let {editingTarget: target, runtime} = this.props.vm;
             const stage = runtime.getTargetForStage();
-            if (!target) target = stage; // If no editingTarget, use the stage
+            if (!target) target = stage;
 
             const stageCostumes = stage.getCostumes();
             const targetCostumes = target.getCostumes();
@@ -370,7 +342,6 @@ class Blocks extends React.Component {
         }
     }
     onWorkspaceUpdate (data) {
-        // When we change sprites, update the toolbox to have the new sprite's blocks
         const toolboxXML = this.getToolboxXML();
         if (toolboxXML) {
             this.props.updateToolboxState(toolboxXML);
@@ -380,21 +351,11 @@ class Blocks extends React.Component {
             this.onWorkspaceMetricsChange();
         }
 
-        // Remove and reattach the workspace listener (but allow flyout events)
         this.workspace.removeChangeListener(this.props.vm.blockListener);
         const dom = this.ScratchBlocks.Xml.textToDom(data.xml);
         try {
             this.ScratchBlocks.Xml.clearWorkspaceAndLoadFromXml(dom, this.workspace);
         } catch (error) {
-            // The workspace is likely incomplete. What did update should be
-            // functional.
-            //
-            // Instead of throwing the error, by logging it and continuing as
-            // normal lets the other workspace update processes complete in the
-            // gui and vm, which lets the vm run even if the workspace is
-            // incomplete. Throwing the error would keep things like setting the
-            // correct editing target from happening which can interfere with
-            // some blocks and processes in the vm.
             if (error.message) {
                 error.message = `Workspace Update Error: ${error.message}`;
             }
@@ -410,23 +371,14 @@ class Blocks extends React.Component {
             this.workspace.resize();
         }
 
-        // Clear the undo state of the workspace since this is a
-        // fresh workspace and we don't want any changes made to another sprites
-        // workspace to be 'undone' here.
         this.workspace.clearUndo();
     }
     handleMonitorsUpdate (monitors) {
-        // Update the checkboxes of the relevant monitors.
-        // TODO: What about monitors that have fields? See todo in scratch-vm blocks.js changeBlock:
-        // https://github.com/LLK/scratch-vm/blob/2373f9483edaf705f11d62662f7bb2a57fbb5e28/src/engine/blocks.js#L569-L576
         const flyout = this.workspace.getFlyout();
         for (const monitor of monitors.values()) {
             const blockId = monitor.get('id');
             const isVisible = monitor.get('visible');
             flyout.setCheckboxState(blockId, isVisible);
-            // We also need to update the isMonitored flag for this block on the VM, since it's used to determine
-            // whether the checkbox is activated or not when the checkbox is re-displayed (e.g. local variables/blocks
-            // when switching between sprites).
             const block = this.props.vm.runtime.monitorBlocks.getBlock(blockId);
             if (block) {
                 block.isMonitored = isVisible;
@@ -444,14 +396,10 @@ class Blocks extends React.Component {
                     } else if (blockInfo.json) {
                         staticBlocksJson.push(injectExtensionBlockTheme(blockInfo.json, this.props.theme));
                     }
-                    // otherwise it's a non-block entry such as '---'
                 });
 
                 this.ScratchBlocks.defineBlocksWithJsonArray(staticBlocksJson);
                 dynamicBlocksInfo.forEach(blockInfo => {
-                    // This is creating the block factory / constructor -- NOT a specific instance of the block.
-                    // The factory should only know static info about the block: the category info and the opcode.
-                    // Anything else will be picked up from the XML attached to the block instance.
                     const extendedOpcode = `${categoryInfo.id}_${blockInfo.info.opcode}`;
                     const blockDefinition =
                         defineDynamicBlock(this.ScratchBlocks, categoryInfo, blockInfo, extendedOpcode);
@@ -460,22 +408,18 @@ class Blocks extends React.Component {
             }
         };
 
-        // scratch-blocks implements a menu or custom field as a special kind of block ("shadow" block)
-        // these actually define blocks and MUST run regardless of the UI state
         defineBlocks(
             Object.getOwnPropertyNames(categoryInfo.customFieldTypes)
                 .map(fieldTypeName => categoryInfo.customFieldTypes[fieldTypeName].scratchBlocksDefinition));
         defineBlocks(categoryInfo.menus);
         defineBlocks(categoryInfo.blocks);
 
-        // Update the toolbox with new blocks if possible
         const toolboxXML = this.getToolboxXML();
         if (toolboxXML) {
             this.props.updateToolboxState(toolboxXML);
         }
     }
     handleBlocksInfoUpdate (categoryInfo) {
-        // @todo Later we should replace this to avoid all the warnings from redefining blocks.
         this.handleExtensionAdded(categoryInfo);
     }
     handleCategorySelected (categoryId) {
@@ -497,7 +441,7 @@ class Blocks extends React.Component {
             this.ScratchBlocks.Msg.VARIABLE_MODAL_TITLE;
         p.prompt.varType = typeof optVarType === 'string' ?
             optVarType : this.ScratchBlocks.SCALAR_VARIABLE_TYPE;
-        p.prompt.showVariableOptions = // This flag means that we should show variable/list options about scope
+        p.prompt.showVariableOptions =
             optVarType !== this.ScratchBlocks.BROADCAST_MESSAGE_VARIABLE_TYPE &&
             p.prompt.title !== this.ScratchBlocks.Msg.RENAME_VARIABLE_MODAL_TITLE &&
             p.prompt.title !== this.ScratchBlocks.Msg.RENAME_LIST_MODAL_TITLE;
@@ -514,11 +458,6 @@ class Blocks extends React.Component {
         this.props.onOpenSoundRecorder();
     }
 
-    /*
-     * Pass along information about proposed name and variable options (scope and isCloud)
-     * and additional potentially conflicting variable names from the VM
-     * to the variable validation prompt callback used in scratch-blocks.
-     */
     handlePromptCallback (input, variableOptions) {
         this.state.prompt.callback(
             input,
@@ -541,11 +480,17 @@ class Blocks extends React.Component {
             .then(blocks => this.props.vm.shareBlocksToTarget(blocks, this.props.vm.editingTarget.id))
             .then(() => {
                 this.props.vm.refreshWorkspace();
-                this.updateToolbox(); // To show new variables/custom blocks
+                this.updateToolbox();
             });
     }
+
+    toggleGeminiChat () {
+        this.setState(prevState => ({
+            showGeminiChat: !prevState.showGeminiChat
+        }));
+    }
+
     render () {
-        /* eslint-disable no-unused-vars */
         const {
             anyModalVisible,
             canUseCloud,
@@ -569,12 +514,10 @@ class Blocks extends React.Component {
             workspaceMetrics,
             ...props
         } = this.props;
-        /* eslint-enable no-unused-vars */
         return (
             <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-                {/* Gemini Expand Bar at top */}
                 <div
-                    onClick={() => console.log("Gemini expand clicked")}
+                    onClick={this.toggleGeminiChat}
                     style={{
                         position: 'absolute',
                         top: 0,
@@ -595,17 +538,51 @@ class Blocks extends React.Component {
                         borderBottomRightRadius: '18px'
                     }}
                 >
-                    ▼ Gemini Chat
+                    {this.state.showGeminiChat ? '▲ Close Gemini Chat' : '▼ Talk to Gemini'}
                 </div>
         
-                {/* Blocks workspace */}
+                {this.state.showGeminiChat && (
+                    <div
+                        style={{
+                            position: 'absolute',
+                            top: '50px',
+                            left: 311.5,
+                            right: 0,
+                            height: 'calc(100% - 50px)',
+                            backgroundColor: '#f0f0f0',
+                            border: '1px solid #ccc',
+                            borderRadius: '8px',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                            zIndex: 999,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            padding: '10px'
+                        }}
+                    >
+                        <div style={{ flexGrow: 1, overflowY: 'auto', marginBottom: '10px', background: 'white', padding: '10px', borderRadius: '4px' }}>
+                            <p>Hello! How can I help you today?</p>
+                            <p style={{textAlign: 'right', color: '#007bff'}}>Hi Gemini!</p>
+                        </div>
+                        <input
+                            type="text"
+                            placeholder="Type your message..."
+                            style={{
+                                width: '100%',
+                                padding: '8px',
+                                border: '1px solid #ccc',
+                                borderRadius: '4px',
+                                boxSizing: 'border-box'
+                            }}
+                        />
+                    </div>
+                )}
+
                 <DroppableBlocks
                     componentRef={this.setBlocks}
                     onDrop={this.handleDrop}
                     {...props}
                 />
         
-                {/* Prompt modal */}
                 {this.state.prompt ? (
                     <Prompt
                         defaultValue={this.state.prompt.defaultValue}
@@ -621,7 +598,6 @@ class Blocks extends React.Component {
                     />
                 ) : null}
         
-                {/* Extension Library modal */}
                 {extensionLibraryVisible ? (
                     <ExtensionLibrary
                         vm={vm}
@@ -630,7 +606,6 @@ class Blocks extends React.Component {
                     />
                 ) : null}
         
-                {/* Custom Procedures modal */}
                 {customProceduresVisible ? (
                     <CustomProcedures
                         options={{ media: options.media }}
@@ -731,20 +706,13 @@ const mapDispatchToProps = dispatch => ({
     onRequestCloseExtensionLibrary: () => {
         dispatch(closeExtensionLibrary());
     },
-    onRequestCloseCustomProcedures: data => {
-        dispatch(deactivateCustomProcedures(data));
-    },
-    updateToolboxState: toolboxXML => {
-        dispatch(updateToolbox(toolboxXML));
-    },
-    updateMetrics: metrics => {
-        dispatch(updateMetrics(metrics));
-    }
+    onRequestCloseCustomProcedures: () => dispatch(deactivateCustomProcedures()),
+    updateToolboxState: toolboxXML => dispatch(updateToolbox(toolboxXML)),
+    updateMetrics: metrics => dispatch(updateMetrics(metrics))
 });
 
-export default errorBoundaryHOC('Blocks')(
-    connect(
-        mapStateToProps,
-        mapDispatchToProps
-    )(Blocks)
-);
+//Export the connected component as default
+export default connect(
+    mapStateToProps,
+    mapDispatchToProps
+)(Blocks);
