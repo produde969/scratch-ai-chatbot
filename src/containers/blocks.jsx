@@ -172,11 +172,16 @@ class Blocks extends React.Component {
                     return;
                 }
 
+                let thinkingTimestamp;
+
                 try {
+
+                    thinkingTimestamp = Date.now();
+
                     this.setState(prevState => ({
                         geminiOutput: [
                             ...prevState.geminiOutput,
-                            { type: 'gemini-thinking', message: 'Gemini: Thinking...', timestamp: Date.now() + 1 } // Unique timestamp
+                            { type: 'gemini-thinking', message: 'Gemini: Thinking...', timestamp: thinkingTimestamp } // Unique timestamp
                         ]
                     }));
                     this.forceUpdate();
@@ -189,22 +194,13 @@ class Blocks extends React.Component {
                     console.log("Gemini response:", text);
 
                     //replace "Thinking..." with Gemini response
-                    this.setState(prevState => {
-                        const updatedOutput = prevState.geminiOutput.map(msg => {
-                            // Find the last 'gemini-thinking' message and replace it
-                            if (msg.type === 'gemini-thinking' && msg.message === 'Gemini: Thinking...' && msg.timestamp > (Date.now() - 5000)) { // Simple check for recent "thinking"
-                                return { type: 'gemini', message: text, timestamp: msg.timestamp };
-                            }
-                            return msg;
-                        });
-
-                        // If for some reason 'thinking' wasn't found/replaced, just append
-                        if (!updatedOutput.find(msg => msg.type === 'gemini' && msg.message === text)) {
-                            return { geminiOutput: [...prevState.geminiOutput, { type: 'gemini', message: text, timestamp: Date.now() }] };
-                        }
-
-                        return { geminiOutput: updatedOutput };
-                    });
+                    this.setState(prevState => ({
+                        geminiOutput: prevState.geminiOutput
+                            // Filter out the *specific* thinking message we just added
+                            .filter(msg => !(msg.type === 'gemini-thinking' && msg.timestamp === thinkingTimestamp))
+                            // Then concatenate Gemini's actual response
+                            .concat([{ type: 'gemini', message: text, timestamp: Date.now() }])
+                    }));
                     this.forceUpdate();
 
                 } catch (error) {
