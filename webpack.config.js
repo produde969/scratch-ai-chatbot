@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const path = require('path');
 const webpack = require('webpack');
 
@@ -160,6 +162,9 @@ const buildConfig = baseConfig.clone()
                 context: 'src/examples'
             }
         ]
+    }))
+    .addPlugin(new webpack.DefinePlugin({
+        'process.env.REACT_APP_GEMINI_API_KEY': JSON.stringify(process.env.REACT_APP_GEMINI_API_KEY)
     }));
 
 // Skip building `dist/` unless explicitly requested

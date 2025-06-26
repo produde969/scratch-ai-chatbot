@@ -35,6 +35,8 @@ import {
     SOUNDS_TAB_INDEX
 } from '../reducers/editor-tab';
 
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
 const addFunctionListener = (object, property, callback) => {
     const oldFn = object[property];
     object[property] = function (...args) {
@@ -47,6 +49,8 @@ const addFunctionListener = (object, property, callback) => {
 const DroppableBlocks = DropAreaHOC([
     DragConstants.BACKPACK_CODE
 ])(BlocksComponent);
+
+const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 
 class Blocks extends React.Component {
     constructor (props) {
@@ -78,7 +82,10 @@ class Blocks extends React.Component {
             'onWorkspaceMetricsChange',
             'setBlocks',
             'setLocale',
-            'toggleGeminiChat'
+            'toggleGeminiChat',
+            'initializeGemini',
+            'handleGeminiInputChange',
+            'handleGeminiInputSubmit'
         ]);
         this.ScratchBlocks.prompt = this.handlePromptStart;
         this.ScratchBlocks.statusButtonCallback = this.handleConnectionModalStart;
@@ -86,10 +93,100 @@ class Blocks extends React.Component {
 
         this.state = {
             prompt: null,
-            showGeminiChat: false
+            showGeminiChat: false,
+            geminiInput: '',
+            geminiOutput: "Hi there! How are you doing today!"
         };
         this.onTargetsUpdate = debounce(this.onTargetsUpdate, 100);
         this.toolboxUpdateQueue = [];
+
+        this.geminiModel = null;
+        this.initializeGemini();
+
+        this.inputRef = React.createRef();
+        
+    }
+    componentDidUpdate(prevProps, prevState) {
+        // If the geminiInput state changed AND the chat is visible AND the input element exists
+        if (this.state.geminiInput !== prevState.geminiInput &&
+            this.state.showGeminiChat &&
+            this.inputRef.current) {
+            // Keep the cursor at the end of the text and force focus
+            const input = this.inputRef.current;
+            const currentLength = input.value.length;
+            input.setSelectionRange(currentLength, currentLength);
+            input.focus();
+        }
+    }
+    initializeGemini() {
+        if (!GEMINI_API_KEY) {
+            console.error("Gemini API Key is missing! Please check your .env file.");
+            return;
+        }
+        try {
+            const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+            this.geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+            console.log("Gemini AI model initialized successfully!");
+        } catch (error) {
+            console.error("Failed to initialize Gemini AI model:", error);
+        }
+    }
+    handleGeminiInputChange(e) {
+        this.setState({ geminiInput: e.target.value });
+        //for troubleshoot purposes
+        console.log('Input changed:', e.target.value);
+    }
+    
+    async handleGeminiInputSubmit(e) { 
+        if (e.key === 'Enter' || e.type === 'click') {
+            e.preventDefault();
+
+            const userInput = this.inputRef.current ? this.inputRef.current.value.trim() : '';
+
+            if (userInput) {
+                console.log("User submitted:", userInput);
+
+                // Update UI immediately with user's message
+                this.setState(prevState => ({
+                    geminiOutput: prevState.geminiOutput + `\n\nUser: ${userInput}\nGemini: Thinking...` // Add "Thinking..."
+                }));
+
+                // Clear the input field manually through the ref
+                if (this.inputRef.current) {
+                    this.inputRef.current.value = '';
+                }
+
+                if (!this.geminiModel) {
+                    console.error("Gemini AI model is not initialized!");
+                    this.setState(prevState => ({
+                        geminiOutput: prevState.geminiOutput.replace('\nGemini: Thinking...', '') + "\n\nGemini: Error: Model not initialized."
+                    }));
+                    return;
+                }
+
+                try {
+                    // Send the message to the Gemini API
+                    const result = await this.geminiModel.generateContent(userInput);
+                    const response = await result.response;
+                    const text = response.text();
+
+                    console.log("Gemini response:", text);
+
+                    // Update the geminiOutput state with Gemini's response
+                    this.setState(prevState => ({
+                        // Replace "Thinking..." with the actual response
+                        geminiOutput: prevState.geminiOutput.replace('\nGemini: Thinking...', '') + `\n\nGemini: ${text}`
+                    }));
+
+                } catch (error) {
+                    console.error("Error calling Gemini API:", error);
+                    // Update geminiOutput with an error message
+                    this.setState(prevState => ({
+                        geminiOutput: prevState.geminiOutput.replace('\nGemini: Thinking...', '') + `\n\nGemini: Error: ${error.message}`
+                    }));
+                }
+            }
+        }
     }
     componentDidMount () {
         this.ScratchBlocks = VMScratchBlocks(this.props.vm, this.props.useCatBlocks);
@@ -559,13 +656,15 @@ class Blocks extends React.Component {
                             padding: '10px'
                         }}
                     >
-                        <div style={{ flexGrow: 1, overflowY: 'auto', marginBottom: '10px', background: 'white', padding: '10px', borderRadius: '4px' }}>
+                        <div style={{ flexGrow: 1, overflowY: 'auto', marginBottom: '10px', background: 'white', padding: '10px', borderRadius: '4px', whiteSpace: 'pre-wrap' }}>
                             <p>Hello! How can I help you today?</p>
                             <p style={{textAlign: 'right', color: '#007bff'}}>Hi Gemini!</p>
                         </div>
                         <input
                             type="text"
                             placeholder="Type your message..."
+                            onKeyDown= {this.handleGeminiInputSubmit} 
+                            ref={this.inputRef}
                             style={{
                                 width: '100%',
                                 padding: '8px',
@@ -574,6 +673,22 @@ class Blocks extends React.Component {
                                 boxSizing: 'border-box'
                             }}
                         />
+                        {
+                        <button
+                            onClick={this.handleGeminiInputSubmit}
+                            style={{
+                                padding: '8px 15px',
+                                marginTop: '5px',
+                                backgroundColor: '#4B90FF',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            Send
+                        </button>
+                        }
                     </div>
                 )}
 
