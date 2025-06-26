@@ -95,7 +95,7 @@ class Blocks extends React.Component {
             prompt: null,
             showGeminiChat: false,
             geminiInput: '',
-            geminiOutput: "Hi there! How are you doing today!"
+            geminiOutput: []
         };
         this.onTargetsUpdate = debounce(this.onTargetsUpdate, 100);
         this.toolboxUpdateQueue = [];
@@ -148,8 +148,12 @@ class Blocks extends React.Component {
 
                 // Update UI immediately with user's message
                 this.setState(prevState => ({
-                    geminiOutput: prevState.geminiOutput + `\n\nUser: ${userInput}\nGemini: Thinking...` // Add "Thinking..."
+                    geminiOutput: [
+                        ...prevState.geminiOutput,
+                        { type: 'user', message: userInput, timestamp: Date.now() } // Add message object
+                    ]
                 }));
+                this.forceUpdate();
 
                 // Clear the input field manually through the ref
                 if (this.inputRef.current) {
@@ -159,12 +163,24 @@ class Blocks extends React.Component {
                 if (!this.geminiModel) {
                     console.error("Gemini AI model is not initialized!");
                     this.setState(prevState => ({
-                        geminiOutput: prevState.geminiOutput.replace('\nGemini: Thinking...', '') + "\n\nGemini: Error: Model not initialized."
+                        geminiOutput: [
+                            ...prevState.geminiOutput,
+                            { type: 'error', message: 'Gemini: Error: Model not initialized.', timestamp: Date.now() }
+                        ]
                     }));
+                    this.forceUpdate();
                     return;
                 }
 
                 try {
+                    this.setState(prevState => ({
+                        geminiOutput: [
+                            ...prevState.geminiOutput,
+                            { type: 'gemini-thinking', message: 'Gemini: Thinking...', timestamp: Date.now() + 1 } // Unique timestamp
+                        ]
+                    }));
+                    this.forceUpdate();
+
                     // Send the message to the Gemini API
                     const result = await this.geminiModel.generateContent(userInput);
                     const response = await result.response;
@@ -172,18 +188,35 @@ class Blocks extends React.Component {
 
                     console.log("Gemini response:", text);
 
-                    // Update the geminiOutput state with Gemini's response
-                    this.setState(prevState => ({
-                        // Replace "Thinking..." with the actual response
-                        geminiOutput: prevState.geminiOutput.replace('\nGemini: Thinking...', '') + `\n\nGemini: ${text}`
-                    }));
+                    //replace "Thinking..." with Gemini response
+                    this.setState(prevState => {
+                        const updatedOutput = prevState.geminiOutput.map(msg => {
+                            // Find the last 'gemini-thinking' message and replace it
+                            if (msg.type === 'gemini-thinking' && msg.message === 'Gemini: Thinking...' && msg.timestamp > (Date.now() - 5000)) { // Simple check for recent "thinking"
+                                return { type: 'gemini', message: text, timestamp: msg.timestamp };
+                            }
+                            return msg;
+                        });
+
+                        // If for some reason 'thinking' wasn't found/replaced, just append
+                        if (!updatedOutput.find(msg => msg.type === 'gemini' && msg.message === text)) {
+                            return { geminiOutput: [...prevState.geminiOutput, { type: 'gemini', message: text, timestamp: Date.now() }] };
+                        }
+
+                        return { geminiOutput: updatedOutput };
+                    });
+                    this.forceUpdate();
 
                 } catch (error) {
                     console.error("Error calling Gemini API:", error);
                     // Update geminiOutput with an error message
                     this.setState(prevState => ({
-                        geminiOutput: prevState.geminiOutput.replace('\nGemini: Thinking...', '') + `\n\nGemini: Error: ${error.message}`
+                        geminiOutput: [
+                            ...prevState.geminiOutput.filter(msg => msg.type !== 'gemini-thinking'), // Remove any pending thinking messages
+                            { type: 'error', message: `Gemini: Error: ${error.message}`, timestamp: Date.now() }
+                        ]
                     }));
+                    this.forceUpdate();
                 }
             }
         }
@@ -611,6 +644,7 @@ class Blocks extends React.Component {
             workspaceMetrics,
             ...props
         } = this.props;
+        console.log("RENDERING UI with geminiOutput:", this.state.geminiOutput);
         return (
             <div style={{ position: 'relative', width: '100%', height: '100%' }}>
                 <div
@@ -656,9 +690,26 @@ class Blocks extends React.Component {
                             padding: '10px'
                         }}
                     >
-                        <div style={{ flexGrow: 1, overflowY: 'auto', marginBottom: '10px', background: 'white', padding: '10px', borderRadius: '4px', whiteSpace: 'pre-wrap' }}>
-                            <p>Hello! How can I help you today?</p>
-                            <p style={{textAlign: 'right', color: '#007bff'}}>Hi Gemini!</p>
+                        
+                        <div style={{ 
+                            flexGrow: 1,
+                            overflowY: 'auto',
+                            marginBottom: '10px',
+                            background: 'white',
+                            padding: '10px',
+                            borderRadius: '4px',
+                            whiteSpace: 'pre-wrap' }}
+                        >
+                            {this.state.geminiOutput.map((chatItem, index) => (
+                                // IMPORTANT: Add a `key` prop for each item in the list
+                                <div key={chatItem.timestamp || index} style={{ marginBottom: '8px' }}>
+                                    {chatItem.type === 'user' && <strong style={{ color: '#007bff' }}>User: </strong>}
+                                    {chatItem.type === 'gemini' && <strong style={{ color: '#28a745' }}>Gemini: </strong>}
+                                    {chatItem.type === 'gemini-thinking' && <strong style={{ color: '#6c757d' }}>{chatItem.message}</strong>}
+                                    {chatItem.type === 'error' && <strong style={{ color: '#dc3545' }}>Error: </strong>}
+                                    {chatItem.type !== 'gemini-thinking' && chatItem.message} {/* Only display message for non-thinking types */}
+                                </div>
+                            ))}
                         </div>
                         <input
                             type="text"
