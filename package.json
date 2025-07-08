@@ -9,7 +9,7 @@
     "type": "git",
     "url": "https://github.com/scratchfoundation/scratch-gui.git"
   },
-  "main": "./dist/scratch-gui.js",
+  "main": "electron/main.js",
   "scripts": {
     "build": "npm run clean && webpack",
     "clean": "rimraf ./build ./dist",
@@ -19,6 +19,8 @@
     "i18n:push": "tx-push-src scratch-editor interface translations/en.json",
     "i18n:src": "rimraf ./translations/messages/src && babel src > tmp.js && rimraf tmp.js && build-i18n-src ./translations/messages/src ./translations/",
     "start": "webpack serve",
+    "electron": "electron .",
+    "dev": "concurrently \"npm run start\" \"wait-on http://localhost:8601 && npm run electron\"",
     "test": "npm run test:lint && npm run test:unit && npm run build && npm run test:integration",
     "test:integration": "jest --maxWorkers=4 test[\\\\/]integration",
     "test:lint": "eslint . --ext .js,.jsx",
@@ -51,6 +53,7 @@
     "fastestsmallesttextencoderdecoder": "^1.0.22",
     "get-float-time-domain-data": "^0.1.0",
     "get-user-media-promise": "^1.1.4",
+    "html2canvas": "^1.4.1",
     "immutable": "^3.8.2",
     "intl": "^1.2.5",
     "js-base64": "^2.4.9",
@@ -116,7 +119,9 @@
     "babel-core": "7.0.0-bridge.0",
     "babel-loader": "9.2.1",
     "cheerio": "1.0.0-rc.3",
+    "concurrently": "^8.0.0",
     "dotenv": "^16.5.0",
+    "electron": "^37.2.0",
     "enzyme": "3.11.0",
     "enzyme-adapter-react-16": "1.15.8",
     "eslint": "8.57.1",
@@ -141,6 +146,7 @@
     "semantic-release": "19.0.5",
     "stream-browserify": "3.0.0",
     "url-loader": "4.1.1",
+    "wait-on": "^7.0.1",
     "web-audio-test-api": "0.5.2",
     "webpack": "5.100.2",
     "webpack-cli": "5.1.4",
@@ -162,3 +168,4 @@
     }
   }
 }
+

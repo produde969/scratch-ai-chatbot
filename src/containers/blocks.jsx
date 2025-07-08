@@ -37,6 +37,8 @@ import {
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+import html2canvas from 'html2canvas';
+
 const addFunctionListener = (object, property, callback) => {
     const oldFn = object[property];
     object[property] = function (...args) {
@@ -118,6 +120,24 @@ class Blocks extends React.Component {
             input.focus();
         }
     }
+
+    takeScreenshot = async () => {
+        if (!window.electronAPI) {
+            alert("Screenshot not available in browser mode.");
+            return;
+        }
+    
+        try {
+            const dataUrl = await window.electronAPI.takeScreenshot();
+            const base64 = dataUrl.split(',')[1];
+            this.setState({ screenshotBase64: base64 });
+            console.log("📸 Electron screenshot captured.");
+        } catch (err) {
+            console.error("Electron screenshot failed:", err);
+        }
+    };
+    
+
     initializeGemini() {
         if (!GEMINI_API_KEY) {
             console.error("Gemini API Key is missing! Please check your .env file.");
@@ -137,86 +157,129 @@ class Blocks extends React.Component {
         console.log('Input changed:', e.target.value);
     }
     
-    async handleGeminiInputSubmit(e) { 
+    
+
+    async handleGeminiInputSubmit(e) {
         if (e.key === 'Enter' || e.type === 'click') {
             e.preventDefault();
+    
+            const userInput = this.inputRef.current?.value.trim();
+            if (!userInput) return;
+    
+            // 🧠 Extract VM context
+            const target = this.props.vm.editingTarget;
+            const runtime = this.props.vm.runtime;
+    
+            let contextText = 'Project context:\n';
+    
+            if (target) {
+                const spriteName = target.getName();
+                const costume = target.getCostumes()?.[target.currentCostume];
+                const blocks = target.blocks._blocks;
+    
+                const activeBlocks = Object.values(blocks)
+                    .filter(b => b.opcode && !b.shadow)
+                    .map(b => b.opcode)
+                    .join(', ');
+    
+                contextText += `- Sprite: ${spriteName}\n`;
+                contextText += `- Costume: ${costume?.name || 'Unknown'}\n`;
+                contextText += `- Position: (${target.x}, ${target.y})\n`;
+                contextText += `- Is Stage: ${target.isStage}\n`;
+                contextText += `- Active Block Types: ${activeBlocks}\n`;
+            } else {
+                contextText += '(No active target found)\n';
+            }
+    
+            const fullPrompt = `${contextText}\n\nUser asked: ${userInput}`;
+            async function captureCanvasScreenshot() {
+                try {
+                    await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 100)));
+            
+                    const glCanvas = document.querySelector('canvas');
+                    if (!glCanvas) {
+                        console.warn("⚠️ WebGL canvas not found.");
+                        return null;
+                    }
+            
+                    // Create an offscreen 2D canvas
+                    const offscreen = document.createElement('canvas');
+                    offscreen.width = glCanvas.width;
+                    offscreen.height = glCanvas.height;
+                    const ctx = offscreen.getContext('2d');
+            
+                    // Try to draw the WebGL canvas onto 2D canvas
+                    ctx.drawImage(glCanvas, 0, 0);
+            
+                    const base64 = offscreen.toDataURL('image/png').split(',')[1]; // Strip prefix
+                    console.log("✅ Offscreen screenshot captured");
+                    return base64;
+                } catch (err) {
+                    console.error("❌ Screenshot capture failed:", err);
+                    return null;
+                }
+            }
+            
+            const screenshotBase64 = await captureCanvasScreenshot();
 
-            const userInput = this.inputRef.current ? this.inputRef.current.value.trim() : '';
+            const parts = [{ text: userInput }];
+            if (screenshotBase64) {
+                parts.push({
+                    inlineData: {
+                        mimeType: "image/png",
+                        data: screenshotBase64
+                }
+                });
+            }
 
-            if (userInput) {
-                console.log("User submitted:", userInput);
-
-                // Update UI immediately with user's message
+    
+            if (this.inputRef.current) this.inputRef.current.value = '';
+    
+            if (!this.geminiModel) {
                 this.setState(prevState => ({
                     geminiOutput: [
                         ...prevState.geminiOutput,
-                        { type: 'user', message: userInput, timestamp: Date.now() } // Add message object
+                        { type: 'error', message: 'Gemini model is not initialized.', timestamp: Date.now() }
+                    ]
+                }));
+                return;
+            }
+    
+            // 🤔 Thinking...
+            const thinkingTimestamp = Date.now();
+            this.setState(prevState => ({
+                geminiOutput: [
+                    ...prevState.geminiOutput,
+                    { type: 'gemini-thinking', message: 'Gemini: Thinking...', timestamp: thinkingTimestamp }
+                ]
+            }));
+            this.forceUpdate();
+    
+            try {
+                const result = await this.geminiModel.generateContent({ contents: [{ role: "user", parts }] });
+                const response = await result.response;
+                const text = response.text();
+    
+                this.setState(prevState => ({
+                    geminiOutput: prevState.geminiOutput
+                        .filter(msg => !(msg.type === 'gemini-thinking' && msg.timestamp === thinkingTimestamp))
+                        .concat([{ type: 'gemini', message: text, timestamp: Date.now() }])
+                }));
+                this.forceUpdate();
+    
+            } catch (error) {
+                console.error("Gemini error:", error);
+                this.setState(prevState => ({
+                    geminiOutput: [
+                        ...prevState.geminiOutput.filter(msg => msg.type !== 'gemini-thinking'),
+                        { type: 'error', message: `Gemini: Error: ${error.message}`, timestamp: Date.now() }
                     ]
                 }));
                 this.forceUpdate();
-
-                // Clear the input field manually through the ref
-                if (this.inputRef.current) {
-                    this.inputRef.current.value = '';
-                }
-
-                if (!this.geminiModel) {
-                    console.error("Gemini AI model is not initialized!");
-                    this.setState(prevState => ({
-                        geminiOutput: [
-                            ...prevState.geminiOutput,
-                            { type: 'error', message: 'Gemini: Error: Model not initialized.', timestamp: Date.now() }
-                        ]
-                    }));
-                    this.forceUpdate();
-                    return;
-                }
-
-                let thinkingTimestamp;
-
-                try {
-
-                    thinkingTimestamp = Date.now();
-
-                    this.setState(prevState => ({
-                        geminiOutput: [
-                            ...prevState.geminiOutput,
-                            { type: 'gemini-thinking', message: 'Gemini: Thinking...', timestamp: thinkingTimestamp } // Unique timestamp
-                        ]
-                    }));
-                    this.forceUpdate();
-
-                    // Send the message to the Gemini API
-                    const result = await this.geminiModel.generateContent(userInput);
-                    const response = await result.response;
-                    const text = response.text();
-
-                    console.log("Gemini response:", text);
-
-                    //replace "Thinking..." with Gemini response
-                    this.setState(prevState => ({
-                        geminiOutput: prevState.geminiOutput
-                            // Filter out the *specific* thinking message we just added
-                            .filter(msg => !(msg.type === 'gemini-thinking' && msg.timestamp === thinkingTimestamp))
-                            // Then concatenate Gemini's actual response
-                            .concat([{ type: 'gemini', message: text, timestamp: Date.now() }])
-                    }));
-                    this.forceUpdate();
-
-                } catch (error) {
-                    console.error("Error calling Gemini API:", error);
-                    // Update geminiOutput with an error message
-                    this.setState(prevState => ({
-                        geminiOutput: [
-                            ...prevState.geminiOutput.filter(msg => msg.type !== 'gemini-thinking'), // Remove any pending thinking messages
-                            { type: 'error', message: `Gemini: Error: ${error.message}`, timestamp: Date.now() }
-                        ]
-                    }));
-                    this.forceUpdate();
-                }
             }
         }
     }
+    
     componentDidMount () {
         this.ScratchBlocks = VMScratchBlocks(this.props.vm, this.props.useCatBlocks);
         this.ScratchBlocks.prompt = this.handlePromptStart;
@@ -720,6 +783,21 @@ class Blocks extends React.Component {
                                 boxSizing: 'border-box'
                             }}
                         />
+                        <button
+                            onClick={this.takeScreenshot}
+                            style={{
+                                padding: '8px 15px',
+                                marginBottom: '5px',
+                                backgroundColor: '#444',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            📷 Take Screenshot of Scratch
+                        </button>
+
                         {
                         <button
                             onClick={this.handleGeminiInputSubmit}
