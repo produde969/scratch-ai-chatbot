@@ -228,7 +228,7 @@ class Blocks extends React.Component {
                     return null;
                 }
             }
-            async function captureCanvasScreenshotWithRetry(maxAttempts = 8, delay = 15) {
+            async function captureCanvasScreenshotWithRetry(maxAttempts = 200, delay = 0.1) {
                 for (let attempt = 0; attempt < maxAttempts; attempt++) {
                     const base64 = await captureCanvasScreenshot();
                     if (base64) {
