@@ -194,33 +194,98 @@ class Blocks extends React.Component {
             const fullPrompt = `${contextText}\n\nUser asked: ${userInput}`;
             async function captureCanvasScreenshot() {
                 try {
-                    await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 100)));
-            
-                    const glCanvas = document.querySelector('canvas');
-                    if (!glCanvas) {
-                        console.warn("⚠️ WebGL canvas not found.");
+                    const canvas = document.querySelector('.stage-wrapper canvas, .stage-and-target-wrapper canvas, .scratch-stage canvas, canvas');
+                    if (!canvas) {
+                        console.warn("⚠️ WebGL canvas not found in known containers.");
                         return null;
                     }
             
-                    // Create an offscreen 2D canvas
+                    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                    if (gl) gl.flush();
+            
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    await new Promise(resolve => setTimeout(resolve, 100));
+            
                     const offscreen = document.createElement('canvas');
-                    offscreen.width = glCanvas.width;
-                    offscreen.height = glCanvas.height;
+                    offscreen.width = canvas.width;
+                    offscreen.height = canvas.height;
                     const ctx = offscreen.getContext('2d');
+                    ctx.drawImage(canvas, 0, 0);
             
-                    // Try to draw the WebGL canvas onto 2D canvas
-                    ctx.drawImage(glCanvas, 0, 0);
+                    const data = ctx.getImageData(0, 0, offscreen.width, offscreen.height).data;
+                    const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
             
-                    const base64 = offscreen.toDataURL('image/png').split(',')[1]; // Strip prefix
-                    console.log("✅ Offscreen screenshot captured");
+                    if (isBlack) {
+                        console.warn("⚠️ Screenshot is completely black.");
+                    }
+            
+                    const base64 = offscreen.toDataURL('image/png').split(',')[1];
+                    console.log("✅ Screenshot captured after render wait");
                     return base64;
                 } catch (err) {
                     console.error("❌ Screenshot capture failed:", err);
+
                     return null;
                 }
             }
+            async function captureCanvasScreenshotWithRetry(maxAttempts = 8, delay = 15) {
+                for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                    const base64 = await captureCanvasScreenshot();
+                    if (base64) {
+                        // Decode to check if image is not fully black
+                        const img = new Image();
+                        img.src = 'data:image/png;base64,' + base64;
+                        await new Promise(resolve => (img.onload = resolve));
             
-            const screenshotBase64 = await captureCanvasScreenshot();
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = img.width;
+                        tempCanvas.height = img.height;
+                        const ctx = tempCanvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+            
+                        const data = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
+                        const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
+                        if (!isBlack) {
+                            console.log(`✅ Successful screenshot on attempt ${attempt + 1}`);
+                            return base64;
+                        }
+                    }
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+                console.warn("⚠️ All screenshot attempts resulted in black images.");
+                return null;
+            }
+            
+            async function captureElectronScreenshot() {
+                try {
+                    const screenshotPath = await window.electronAPI.takeScreenshot();
+                    const res = await fetch(`file://${screenshotPath}`);
+                    const buffer = await res.arrayBuffer();
+                    const base64 = Buffer.from(buffer).toString('base64');
+                    return base64;
+                } catch (err) {
+                    console.error('Screenshot capture failed:', err);
+                    return null;
+                }
+            }
+                       
+
+            /*async function captureElectronScreenshot() {
+                try {
+                    const screenshotPath = await ipcRenderer.invoke('take-screenshot');
+                    console.log('✅ Screenshot saved at:', screenshotPath);
+
+                    const buffer = await fetch(`file://${screenshotPath}`).then(res => res.arrayBuffer());
+                    const base64 = Buffer.from(buffer).toString('base64');
+                    return base64;
+                } catch (err) {
+                    console.error('❌ Electron screenshot failed:', err);
+                    return null;
+                }
+            }*/
+
+                        
+            const screenshotBase64 = await captureCanvasScreenshotWithRetry();
 
             const parts = [{ text: userInput }];
             if (screenshotBase64) {
@@ -323,6 +388,21 @@ class Blocks extends React.Component {
         if (this.props.isVisible) {
             this.setLocale();
         }
+        const canvas = document.querySelector('.stage-wrapper canvas');
+        if (canvas && !canvas._patched) {
+            const oldGetContext = canvas.getContext;
+            canvas.getContext = function(type, attrs) {
+                if (type === 'webgl' || type === 'experimental-webgl') {
+                    return oldGetContext.call(this, type, {
+                        preserveDrawingBuffer: true,
+                        ...attrs
+                    });
+                }
+                return oldGetContext.call(this, type, attrs);
+            };
+            canvas._patched = true;
+}
+
     }
     shouldComponentUpdate (nextProps, nextState) {
         return (
@@ -956,3 +1036,4 @@ export default connect(
     mapStateToProps,
     mapDispatchToProps
 )(Blocks);
+
