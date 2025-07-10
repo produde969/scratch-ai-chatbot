@@ -52,6 +52,10 @@ const DroppableBlocks = DropAreaHOC([
     DragConstants.BACKPACK_CODE
 ])(BlocksComponent);
 
+// It's important to keep API keys secure. For a real application,
+// you would use a backend to handle API calls.
+// For this example, we'll assume REACT_APP_GEMINI_API_KEY is available
+// in the environment for demonstration purposes.
 const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 
 class Blocks extends React.Component {
@@ -87,7 +91,8 @@ class Blocks extends React.Component {
             'toggleGeminiChat',
             'initializeGemini',
             'handleGeminiInputChange',
-            'handleGeminiInputSubmit'
+            'handleGeminiInputSubmit',
+            'handleIncludeScreenshotChange' // Bind the new handler
         ]);
         this.ScratchBlocks.prompt = this.handlePromptStart;
         this.ScratchBlocks.statusButtonCallback = this.handleConnectionModalStart;
@@ -97,7 +102,8 @@ class Blocks extends React.Component {
             prompt: null,
             showGeminiChat: false,
             geminiInput: '',
-            geminiOutput: []
+            geminiOutput: [],
+            includeScreenshot: false // New state for screenshot option
         };
         this.onTargetsUpdate = debounce(this.onTargetsUpdate, 100);
         this.toolboxUpdateQueue = [];
@@ -108,12 +114,13 @@ class Blocks extends React.Component {
         this.inputRef = React.createRef();
         
     }
+
+    // This lifecycle method is used to keep the cursor at the end of the input
+    // when the Gemini chat is open and the input changes.
     componentDidUpdate(prevProps, prevState) {
-        // If the geminiInput state changed AND the chat is visible AND the input element exists
         if (this.state.geminiInput !== prevState.geminiInput &&
             this.state.showGeminiChat &&
             this.inputRef.current) {
-            // Keep the cursor at the end of the text and force focus
             const input = this.inputRef.current;
             const currentLength = input.value.length;
             input.setSelectionRange(currentLength, currentLength);
@@ -121,23 +128,7 @@ class Blocks extends React.Component {
         }
     }
 
-    takeScreenshot = async () => {
-        if (!window.electronAPI) {
-            alert("Screenshot not available in browser mode.");
-            return;
-        }
-    
-        try {
-            const dataUrl = await window.electronAPI.takeScreenshot();
-            const base64 = dataUrl.split(',')[1];
-            this.setState({ screenshotBase64: base64 });
-            console.log("📸 Electron screenshot captured.");
-        } catch (err) {
-            console.error("Electron screenshot failed:", err);
-        }
-    };
-    
-
+    // Initializes the Gemini AI model using the provided API key.
     initializeGemini() {
         if (!GEMINI_API_KEY) {
             console.error("Gemini API Key is missing! Please check your .env file.");
@@ -145,20 +136,25 @@ class Blocks extends React.Component {
         }
         try {
             const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+            // Using gemini-2.5-flash as requested.
             this.geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
             console.log("Gemini AI model initialized successfully!");
         } catch (error) {
             console.error("Failed to initialize Gemini AI model:", error);
         }
     }
+
+    // Handles changes to the Gemini input text field.
     handleGeminiInputChange(e) {
         this.setState({ geminiInput: e.target.value });
-        //for troubleshoot purposes
-        console.log('Input changed:', e.target.value);
+    }
+
+    // Handles changes to the "Include Screenshot" checkbox.
+    handleIncludeScreenshotChange(e) {
+        this.setState({ includeScreenshot: e.target.checked });
     }
     
-    
-
+    // Handles the submission of the Gemini input, either by Enter key or button click.
     async handleGeminiInputSubmit(e) {
         if (e.key === 'Enter' || e.type === 'click') {
             e.preventDefault();
@@ -166,10 +162,8 @@ class Blocks extends React.Component {
             const userInput = this.inputRef.current?.value.trim();
             if (!userInput) return;
     
-            // 🧠 Extract VM context
+            // Extract VM context to provide to Gemini for better understanding.
             const target = this.props.vm.editingTarget;
-            const runtime = this.props.vm.runtime;
-    
             let contextText = 'Project context:\n';
     
             if (target) {
@@ -191,27 +185,34 @@ class Blocks extends React.Component {
                 contextText += '(No active target found)\n';
             }
     
-            const fullPrompt = `${contextText}\n\nUser asked: ${userInput}`;
+            // Function to capture a screenshot of the Scratch canvas.
+            // It retries multiple times to ensure a non-black image is captured.
             async function captureCanvasScreenshot() {
                 try {
+                    // Select the main canvas element used by Scratch.
                     const canvas = document.querySelector('.stage-wrapper canvas, .stage-and-target-wrapper canvas, .scratch-stage canvas, canvas');
                     if (!canvas) {
                         console.warn("⚠️ WebGL canvas not found in known containers.");
                         return null;
                     }
             
+                    // Flush WebGL context to ensure all drawing commands are executed.
                     const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
                     if (gl) gl.flush();
             
+                    // Wait for rendering to complete (two requestAnimationFrame calls)
                     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    // Add a small timeout for good measure, allowing the browser to fully render.
                     await new Promise(resolve => setTimeout(resolve, 100));
             
+                    // Create an offscreen canvas to draw the screenshot.
                     const offscreen = document.createElement('canvas');
                     offscreen.width = canvas.width;
                     offscreen.height = canvas.height;
                     const ctx = offscreen.getContext('2d');
                     ctx.drawImage(canvas, 0, 0);
             
+                    // Check if the captured image is entirely black (common issue with WebGL screenshots).
                     const data = ctx.getImageData(0, 0, offscreen.width, offscreen.height).data;
                     const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
             
@@ -219,16 +220,18 @@ class Blocks extends React.Component {
                         console.warn("⚠️ Screenshot is completely black.");
                     }
             
+                    // Convert the canvas content to a base64 PNG data URL.
                     const base64 = offscreen.toDataURL('image/png').split(',')[1];
                     console.log("✅ Screenshot captured after render wait");
                     return base64;
                 } catch (err) {
                     console.error("❌ Screenshot capture failed:", err);
-
                     return null;
                 }
             }
-            async function captureCanvasScreenshotWithRetry(maxAttempts = 200, delay = 0.1) {
+
+            // Retries screenshot capture to ensure a valid (non-black) image.
+            async function captureCanvasScreenshotWithRetry(maxAttempts = 20, delay = 50) { // Reduced attempts and delay for better performance
                 for (let attempt = 0; attempt < maxAttempts; attempt++) {
                     const base64 = await captureCanvasScreenshot();
                     if (base64) {
@@ -256,50 +259,27 @@ class Blocks extends React.Component {
                 return null;
             }
             
-            async function captureElectronScreenshot() {
-                try {
-                    const screenshotPath = await window.electronAPI.takeScreenshot();
-                    const res = await fetch(`file://${screenshotPath}`);
-                    const buffer = await res.arrayBuffer();
-                    const base64 = Buffer.from(buffer).toString('base64');
-                    return base64;
-                } catch (err) {
-                    console.error('Screenshot capture failed:', err);
-                    return null;
-                }
+            let screenshotBase64 = null;
+            // Only capture screenshot if the option is enabled.
+            if (this.state.includeScreenshot) {
+                screenshotBase64 = await captureCanvasScreenshotWithRetry();
             }
-                       
 
-            /*async function captureElectronScreenshot() {
-                try {
-                    const screenshotPath = await ipcRenderer.invoke('take-screenshot');
-                    console.log('✅ Screenshot saved at:', screenshotPath);
-
-                    const buffer = await fetch(`file://${screenshotPath}`).then(res => res.arrayBuffer());
-                    const base64 = Buffer.from(buffer).toString('base64');
-                    return base64;
-                } catch (err) {
-                    console.error('❌ Electron screenshot failed:', err);
-                    return null;
-                }
-            }*/
-
-                        
-            const screenshotBase64 = await captureCanvasScreenshotWithRetry();
-
+            // Prepare the parts for the Gemini API request.
             const parts = [{ text: userInput }];
             if (screenshotBase64) {
                 parts.push({
                     inlineData: {
                         mimeType: "image/png",
                         data: screenshotBase64
-                }
+                    }
                 });
             }
-
     
+            // Clear the input field after sending.
             if (this.inputRef.current) this.inputRef.current.value = '';
     
+            // Handle case where Gemini model is not initialized.
             if (!this.geminiModel) {
                 this.setState(prevState => ({
                     geminiOutput: [
@@ -310,37 +290,41 @@ class Blocks extends React.Component {
                 return;
             }
     
-            // 🤔 Thinking...
+            // Display "Thinking..." message while waiting for Gemini's response.
             const thinkingTimestamp = Date.now();
             this.setState(prevState => ({
                 geminiOutput: [
                     ...prevState.geminiOutput,
+                    { type: 'user', message: userInput, hasScreenshot: !!screenshotBase64, timestamp: Date.now() }, // Add user message immediately
                     { type: 'gemini-thinking', message: 'Gemini: Thinking...', timestamp: thinkingTimestamp }
                 ]
             }));
-            this.forceUpdate();
+            this.forceUpdate(); // Force re-render to show thinking message immediately
     
             try {
+                // Call the Gemini API to generate content.
                 const result = await this.geminiModel.generateContent({ contents: [{ role: "user", parts }] });
                 const response = await result.response;
                 const text = response.text();
     
+                // Update state with Gemini's response, removing the thinking message.
                 this.setState(prevState => ({
                     geminiOutput: prevState.geminiOutput
                         .filter(msg => !(msg.type === 'gemini-thinking' && msg.timestamp === thinkingTimestamp))
                         .concat([{ type: 'gemini', message: text, timestamp: Date.now() }])
                 }));
-                this.forceUpdate();
+                this.forceUpdate(); // Force re-render to show Gemini's response
     
             } catch (error) {
                 console.error("Gemini error:", error);
+                // Display error message if the API call fails.
                 this.setState(prevState => ({
                     geminiOutput: [
                         ...prevState.geminiOutput.filter(msg => msg.type !== 'gemini-thinking'),
                         { type: 'error', message: `Gemini: Error: ${error.message}`, timestamp: Date.now() }
                     ]
                 }));
-                this.forceUpdate();
+                this.forceUpdate(); // Force re-render to show error message
             }
         }
     }
@@ -388,6 +372,8 @@ class Blocks extends React.Component {
         if (this.props.isVisible) {
             this.setLocale();
         }
+        // Patch the canvas getContext to preserve drawing buffer,
+        // which is necessary for screenshot capture.
         const canvas = document.querySelector('.stage-wrapper canvas');
         if (canvas && !canvas._patched) {
             const oldGetContext = canvas.getContext;
@@ -401,10 +387,11 @@ class Blocks extends React.Component {
                 return oldGetContext.call(this, type, attrs);
             };
             canvas._patched = true;
-}
+        }
 
     }
     shouldComponentUpdate (nextProps, nextState) {
+        // Optimize re-renders by checking only relevant props and state.
         return (
             this.state.prompt !== nextState.prompt ||
             this.props.isVisible !== nextProps.isVisible ||
@@ -414,19 +401,23 @@ class Blocks extends React.Component {
             this.props.locale !== nextProps.locale ||
             this.props.anyModalVisible !== nextProps.anyModalVisible ||
             this.props.stageSize !== nextProps.stageSize ||
-            this.state.showGeminiChat !== nextState.showGeminiChat
+            this.state.showGeminiChat !== nextState.showGeminiChat ||
+            this.state.includeScreenshot !== nextState.includeScreenshot || // Include new state
+            this.state.geminiOutput !== nextState.geminiOutput // Include geminiOutput for chat updates
         );
     }
     componentDidUpdate (prevProps) {
-        
+        // Hide ScratchBlocks chaff (e.g., context menus) when any modal is visible.
         if (this.props.anyModalVisible && !prevProps.anyModalVisible) {
             this.ScratchBlocks.hideChaff();
         }
 
+        // Request toolbox update if visibility is true and toolbox XML has changed.
         if (this.props.isVisible && this.props.toolboxXML !== this._renderedToolboxXML) {
             this.requestToolboxUpdate();
         }
 
+        // If visibility hasn't changed, but stage size has, dispatch resize event.
         if (this.props.isVisible === prevProps.isVisible) {
             if (this.props.stageSize !== prevProps.stageSize) {
                 window.dispatchEvent(new Event('resize'));
@@ -434,6 +425,7 @@ class Blocks extends React.Component {
             return;
         }
 
+        // Handle visibility changes for the workspace.
         if (this.props.isVisible) {
             this.workspace.setVisible(true);
             if (prevProps.locale !== this.props.locale || this.props.locale !== this.props.vm.getLocale()) {
@@ -753,6 +745,7 @@ class Blocks extends React.Component {
             });
     }
 
+    // Toggles the visibility of the Gemini chat interface.
     toggleGeminiChat () {
         this.setState(prevState => ({
             showGeminiChat: !prevState.showGeminiChat
@@ -773,8 +766,6 @@ class Blocks extends React.Component {
             onActivateColorPicker,
             onOpenConnectionModal,
             onOpenSoundRecorder,
-            updateToolboxState,
-            onActivateCustomProcedures,
             onRequestCloseExtensionLibrary,
             onRequestCloseCustomProcedures,
             toolboxXML,
@@ -783,9 +774,10 @@ class Blocks extends React.Component {
             workspaceMetrics,
             ...props
         } = this.props;
-        console.log("RENDERING UI with geminiOutput:", this.state.geminiOutput);
+
         return (
             <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                {/* Button to toggle Gemini chat visibility */}
                 <div
                     onClick={this.toggleGeminiChat}
                     style={{
@@ -811,14 +803,15 @@ class Blocks extends React.Component {
                     {this.state.showGeminiChat ? '▲ Close Gemini Chat' : '▼ Talk to Gemini'}
                 </div>
         
+                {/* Gemini Chat Interface */}
                 {this.state.showGeminiChat && (
                     <div
                         style={{
                             position: 'absolute',
-                            top: '50px',
+                            top: '50px', // Position below the toggle button
                             left: 311.5,
                             right: 0,
-                            height: 'calc(100% - 50px)',
+                            height: 'calc(100% - 50px)', // Adjust height
                             backgroundColor: '#f0f0f0',
                             border: '1px solid #ccc',
                             borderRadius: '8px',
@@ -829,7 +822,7 @@ class Blocks extends React.Component {
                             padding: '10px'
                         }}
                     >
-                        
+                        {/* Chat output area */}
                         <div style={{ 
                             flexGrow: 1,
                             overflowY: 'auto',
@@ -840,60 +833,62 @@ class Blocks extends React.Component {
                             whiteSpace: 'pre-wrap' }}
                         >
                             {this.state.geminiOutput.map((chatItem, index) => (
-                                // IMPORTANT: Add a `key` prop for each item in the list
                                 <div key={chatItem.timestamp || index} style={{ marginBottom: '8px' }}>
-                                    {chatItem.type === 'user' && <strong style={{ color: '#007bff' }}>User: </strong>}
+                                    {chatItem.type === 'user' && (
+                                        <strong style={{ color: '#007bff' }}>
+                                            User: {chatItem.hasScreenshot && '(with screenshot) '}
+                                        </strong>
+                                    )}
                                     {chatItem.type === 'gemini' && <strong style={{ color: '#28a745' }}>Gemini: </strong>}
                                     {chatItem.type === 'gemini-thinking' && <strong style={{ color: '#6c757d' }}>{chatItem.message}</strong>}
-                                    {chatItem.type === 'error' && <strong style={{ color: '#dc3545' }}>Error: </strong>}
-                                    {chatItem.type !== 'gemini-thinking' && chatItem.message} {/* Only display message for non-thinking types */}
+                                    {chatItem.type !== 'gemini-thinking' && chatItem.message}
                                 </div>
                             ))}
                         </div>
-                        <input
-                            type="text"
-                            placeholder="Type your message..."
-                            onKeyDown= {this.handleGeminiInputSubmit} 
-                            ref={this.inputRef}
-                            style={{
-                                width: '100%',
-                                padding: '8px',
-                                border: '1px solid #ccc',
-                                borderRadius: '4px',
-                                boxSizing: 'border-box'
-                            }}
-                        />
-                        <button
-                            onClick={this.takeScreenshot}
-                            style={{
-                                padding: '8px 15px',
-                                marginBottom: '5px',
-                                backgroundColor: '#444',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            📷 Take Screenshot of Scratch
-                        </button>
-
-                        {
-                        <button
-                            onClick={this.handleGeminiInputSubmit}
-                            style={{
-                                padding: '8px 15px',
-                                marginTop: '5px',
-                                backgroundColor: '#4B90FF',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            Send
-                        </button>
-                        }
+                        {/* Input field and screenshot option */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <input
+                                    type="checkbox"
+                                    id="includeScreenshot"
+                                    checked={this.state.includeScreenshot}
+                                    onChange={this.handleIncludeScreenshotChange}
+                                    style={{ transform: 'scale(1.2)' }}
+                                />
+                                <label htmlFor="includeScreenshot" style={{ fontSize: '14px', color: '#555' }}>
+                                    Include screenshot with message
+                                </label>
+                            </div>
+                            <div style={{ display: 'flex', gap: '5px' }}>
+                                <input
+                                    type="text"
+                                    placeholder="Type your message..."
+                                    onKeyDown={this.handleGeminiInputSubmit} 
+                                    ref={this.inputRef}
+                                    style={{
+                                        flexGrow: 1,
+                                        padding: '8px',
+                                        border: '1px solid #ccc',
+                                        borderRadius: '4px',
+                                        boxSizing: 'border-box'
+                                    }}
+                                />
+                                <button
+                                    onClick={this.handleGeminiInputSubmit}
+                                    style={{
+                                        padding: '8px 15px',
+                                        backgroundColor: '#4B90FF',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        flexShrink: 0
+                                    }}
+                                >
+                                    Send
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 )}
 
