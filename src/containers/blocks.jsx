@@ -131,19 +131,35 @@ class Blocks extends React.Component {
 
     // Initializes the Gemini AI model using the provided API key.
     initializeGemini() {
-        if (!GEMINI_API_KEY) {
-            console.error("Gemini API Key is missing! Please check your .env file.");
-            return;
-        }
-        try {
-            const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-            // Using gemini-2.5-flash as requested.
-            this.geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-            console.log("Gemini AI model initialized successfully!");
-        } catch (error) {
-            console.error("Failed to initialize Gemini AI model:", error);
-        }
+        this.geminiModel = {
+            generateContent: async ({ contents }) => {
+                const response = await fetch('http://localhost:3001/api/gemini', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        userInput: contents[0].parts.find(p => p.text)?.text,
+                        screenshotBase64: contents[0].parts.find(p => p.inlineData)?.inlineData?.data
+                    })
+                });
+        
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    const message = errorData?.error || 'Failed to fetch from backend';
+                    throw new Error(message);
+                }
+        
+                const data = await response.json();
+                if (!data.message) throw new Error("Gemini backend returned no message field");
+        
+                return {
+                    response: {
+                        text: () => data.message
+                    }
+                };
+            }
+        };
     }
+    
 
     // Handles changes to the Gemini input text field.
     handleGeminiInputChange(e) {
@@ -327,10 +343,18 @@ class Blocks extends React.Component {
     
         try {
             // Call the Gemini API to generate content.
-            const result = await this.geminiModel.generateContent({ contents: [{ role: "user", parts }] });
-            const response = await result.response;
+            let response;
+            try {
+                const result = await this.geminiModel.generateContent({ contents: [{ role: "user", parts }] });
+                response = result?.response;
+                if (!response || typeof response.text !== 'function') {
+                    throw new Error("Gemini API returned no valid response");
+                }
+            } catch (err) {
+                throw new Error("Gemini failed to generate a response: " + err.message);
+            }
             const text = response.text();
-    
+
             // Update state with Gemini's response, replacing the thinking message.
             this.setState(prevState => ({
                 geminiOutput: prevState.geminiOutput.map(msg =>
