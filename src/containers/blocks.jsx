@@ -303,7 +303,7 @@ class Blocks extends React.Component {
         }
 
         // Retries screenshot capture to ensure a valid (non-black) image.
-        async function captureCanvasScreenshotWithRetry(maxAttempts = 20, delay = 50) { // Reduced attempts and delay for better performance
+        async function captureCanvasScreenshotWithRetry(maxAttempts = 200, delay = 0.1) { // Reduced attempts and delay for better performance
             for (let attempt = 0; attempt < maxAttempts; attempt++) {
                 const base64 = await captureCanvasScreenshot();
                 if (base64) {
