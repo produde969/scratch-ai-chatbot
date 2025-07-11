@@ -103,7 +103,8 @@ class Blocks extends React.Component {
             showGeminiChat: false,
             geminiInput: '',
             geminiOutput: [],
-            includeScreenshot: false // New state for screenshot option
+            includeScreenshot: false, // New state for screenshot option
+            submitting: false // New state to prevent double submission
         };
         this.onTargetsUpdate = debounce(this.onTargetsUpdate, 100);
         this.toolboxUpdateQueue = [];
@@ -156,176 +157,201 @@ class Blocks extends React.Component {
     
     // Handles the submission of the Gemini input, either by Enter key or button click.
     async handleGeminiInputSubmit(e) {
+        // Prevent default form submission behavior (e.g., if input is inside a form)
+        // and prevent the click event from propagating if it's already handled by onKeyDown
         if (e.key === 'Enter' || e.type === 'click') {
             e.preventDefault();
-    
-            const userInput = this.inputRef.current?.value.trim();
-            if (!userInput) return;
-    
-            // Extract VM context to provide to Gemini for better understanding.
-            const target = this.props.vm.editingTarget;
-            let contextText = 'Project context:\n';
-    
-            if (target) {
-                const spriteName = target.getName();
-                const costume = target.getCostumes()?.[target.currentCostume];
-                const blocks = target.blocks._blocks;
-    
-                const activeBlocks = Object.values(blocks)
-                    .filter(b => b.opcode && !b.shadow)
-                    .map(b => b.opcode)
-                    .join(', ');
-    
-                contextText += `- Sprite: ${spriteName}\n`;
-                contextText += `- Costume: ${costume?.name || 'Unknown'}\n`;
-                contextText += `- Position: (${target.x}, ${target.y})\n`;
-                contextText += `- Is Stage: ${target.isStage}\n`;
-                contextText += `- Active Block Types: ${activeBlocks}\n`;
-            } else {
-                contextText += '(No active target found)\n';
-            }
-    
-            // Function to capture a screenshot of the Scratch canvas.
-            // It retries multiple times to ensure a non-black image is captured.
-            async function captureCanvasScreenshot() {
-                try {
-                    // Select the main canvas element used by Scratch.
-                    const canvas = document.querySelector('.stage-wrapper canvas, .stage-and-target-wrapper canvas, .scratch-stage canvas, canvas');
-                    if (!canvas) {
-                        console.warn("⚠️ WebGL canvas not found in known containers.");
-                        return null;
-                    }
-            
-                    // Flush WebGL context to ensure all drawing commands are executed.
-                    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-                    if (gl) gl.flush();
-            
-                    // Wait for rendering to complete (two requestAnimationFrame calls)
-                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-                    // Add a small timeout for good measure, allowing the browser to fully render.
-                    await new Promise(resolve => setTimeout(resolve, 100));
-            
-                    // Create an offscreen canvas to draw the screenshot.
-                    const offscreen = document.createElement('canvas');
-                    offscreen.width = canvas.width;
-                    offscreen.height = canvas.height;
-                    const ctx = offscreen.getContext('2d');
-                    ctx.drawImage(canvas, 0, 0);
-            
-                    // Check if the captured image is entirely black (common issue with WebGL screenshots).
-                    const data = ctx.getImageData(0, 0, offscreen.width, offscreen.height).data;
-                    const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
-            
-                    if (isBlack) {
-                        console.warn("⚠️ Screenshot is completely black.");
-                    }
-            
-                    // Convert the canvas content to a base64 PNG data URL.
-                    const base64 = offscreen.toDataURL('image/png').split(',')[1];
-                    console.log("✅ Screenshot captured after render wait");
-                    return base64;
-                } catch (err) {
-                    console.error("❌ Screenshot capture failed:", err);
+        } else {
+            // Only proceed if it's an Enter key press or a click event
+            return;
+        }
+
+        const userInput = this.inputRef.current?.value.trim();
+        if (!userInput) return;
+
+        // Prevent double submission
+        if (this.state.submitting) {
+            console.log("Submission already in progress, ignoring.");
+            return;
+        }
+
+        this.setState({ submitting: true }); // Set submitting flag
+
+        // Generate unique IDs for messages
+        const userMessageId = crypto.randomUUID();
+        const thinkingMessageId = crypto.randomUUID();
+
+        // Clear the input field immediately
+        if (this.inputRef.current) this.inputRef.current.value = '';
+
+        // Display user message and "Thinking..." message
+        this.setState(prevState => ({
+            geminiOutput: [
+                ...prevState.geminiOutput,
+                { id: userMessageId, type: 'user', message: userInput, hasScreenshot: false, timestamp: Date.now() },
+                { id: thinkingMessageId, type: 'gemini-thinking', message: 'Gemini: Thinking...', timestamp: Date.now() }
+            ]
+        }));
+
+        if (!this.geminiModel) {
+            this.setState(prevState => ({
+                geminiOutput: prevState.geminiOutput.map(msg =>
+                    msg.id === thinkingMessageId
+                        ? { ...msg, type: 'error', message: 'Gemini model is not initialized.' }
+                        : msg
+                ),
+                submitting: false // Reset submitting flag
+            }));
+            return;
+        }
+
+        let screenshotBase64 = null;
+        if (this.state.includeScreenshot) {
+            // Update user message to indicate screenshot is included
+            this.setState(prevState => ({
+                geminiOutput: prevState.geminiOutput.map(msg =>
+                    msg.id === userMessageId
+                        ? { ...msg, hasScreenshot: true }
+                        : msg
+                )
+            }));
+            screenshotBase64 = await captureCanvasScreenshotWithRetry();
+        }
+
+        // Extract VM context to provide to Gemini for better understanding.
+        const target = this.props.vm.editingTarget;
+        let contextText = 'Project context:\n';
+
+        if (target) {
+            const spriteName = target.getName();
+            const costume = target.getCostumes()?.[target.currentCostume];
+            const blocks = target.blocks._blocks;
+
+            const activeBlocks = Object.values(blocks)
+                .filter(b => b.opcode && !b.shadow)
+                .map(b => b.opcode)
+                .join(', ');
+
+            contextText += `- Sprite: ${spriteName}\n`;
+            contextText += `- Costume: ${costume?.name || 'Unknown'}\n`;
+            contextText += `- Position: (${target.x}, ${target.y})\n`;
+            contextText += `- Is Stage: ${target.isStage}\n`;
+            contextText += `- Active Block Types: ${activeBlocks}\n`;
+        } else {
+            contextText += '(No active target found)\n';
+        }
+
+        // Function to capture a screenshot of the Scratch canvas.
+        // It retries multiple times to ensure a non-black image is captured.
+        async function captureCanvasScreenshot() {
+            try {
+                // Select the main canvas element used by Scratch.
+                const canvas = document.querySelector('.stage-wrapper canvas, .stage-and-target-wrapper canvas, .scratch-stage canvas, canvas');
+                if (!canvas) {
+                    console.warn("⚠️ WebGL canvas not found in known containers.");
                     return null;
                 }
-            }
-
-            // Retries screenshot capture to ensure a valid (non-black) image.
-            async function captureCanvasScreenshotWithRetry(maxAttempts = 20, delay = 50) { // Reduced attempts and delay for better performance
-                for (let attempt = 0; attempt < maxAttempts; attempt++) {
-                    const base64 = await captureCanvasScreenshot();
-                    if (base64) {
-                        // Decode to check if image is not fully black
-                        const img = new Image();
-                        img.src = 'data:image/png;base64,' + base64;
-                        await new Promise(resolve => (img.onload = resolve));
-            
-                        const tempCanvas = document.createElement('canvas');
-                        tempCanvas.width = img.width;
-                        tempCanvas.height = img.height;
-                        const ctx = tempCanvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0);
-            
-                        const data = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
-                        const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
-                        if (!isBlack) {
-                            console.log(`✅ Successful screenshot on attempt ${attempt + 1}`);
-                            return base64;
-                        }
-                    }
-                    await new Promise(resolve => setTimeout(resolve, delay));
+        
+                // Flush WebGL context to ensure all drawing commands are executed.
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (gl) gl.flush();
+        
+                // Wait for rendering to complete (two requestAnimationFrame calls)
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                // Add a small timeout for good measure, allowing the browser to fully render.
+                await new Promise(resolve => setTimeout(resolve, 100));
+        
+                // Create an offscreen canvas to draw the screenshot.
+                const offscreen = document.createElement('canvas');
+                offscreen.width = canvas.width;
+                offscreen.height = canvas.height;
+                const ctx = offscreen.getContext('2d');
+                ctx.drawImage(canvas, 0, 0);
+        
+                // Check if the captured image is entirely black (common issue with WebGL screenshots).
+                const data = ctx.getImageData(0, 0, offscreen.width, offscreen.height).data;
+                const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
+        
+                if (isBlack) {
+                    console.warn("⚠️ Screenshot is completely black.");
                 }
-                console.warn("⚠️ All screenshot attempts resulted in black images.");
+        
+                // Convert the canvas content to a base64 PNG data URL.
+                const base64 = offscreen.toDataURL('image/png').split(',')[1];
+                console.log("✅ Screenshot captured after render wait");
+                return base64;
+            } catch (err) {
+                console.error("❌ Screenshot capture failed:", err);
                 return null;
             }
-            
-            let screenshotBase64 = null;
-            // Only capture screenshot if the option is enabled.
-            if (this.state.includeScreenshot) {
-                screenshotBase64 = await captureCanvasScreenshotWithRetry();
-            }
+        }
 
-            // Prepare the parts for the Gemini API request.
-            const parts = [{ text: userInput }];
-            if (screenshotBase64) {
-                parts.push({
-                    inlineData: {
-                        mimeType: "image/png",
-                        data: screenshotBase64
+        // Retries screenshot capture to ensure a valid (non-black) image.
+        async function captureCanvasScreenshotWithRetry(maxAttempts = 20, delay = 50) { // Reduced attempts and delay for better performance
+            for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                const base64 = await captureCanvasScreenshot();
+                if (base64) {
+                    // Decode to check if image is not fully black
+                    const img = new Image();
+                    img.src = 'data:image/png;base64,' + base64;
+                    await new Promise(resolve => (img.onload = resolve));
+        
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = img.width;
+                    tempCanvas.height = img.height;
+                    const ctx = tempCanvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+        
+                    const data = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
+                    const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
+                    if (!isBlack) {
+                        console.log(`✅ Successful screenshot on attempt ${attempt + 1}`);
+                        return base64;
                     }
-                });
+                }
+                await new Promise(resolve => setTimeout(resolve, delay));
             }
+            console.warn("⚠️ All screenshot attempts resulted in black images.");
+            return null;
+        }
+        
+        const parts = [{ text: userInput }];
+        if (screenshotBase64) {
+            parts.push({
+                inlineData: {
+                    mimeType: "image/png",
+                    data: screenshotBase64
+                }
+            });
+        }
     
-            // Clear the input field after sending.
-            if (this.inputRef.current) this.inputRef.current.value = '';
+        try {
+            // Call the Gemini API to generate content.
+            const result = await this.geminiModel.generateContent({ contents: [{ role: "user", parts }] });
+            const response = await result.response;
+            const text = response.text();
     
-            // Handle case where Gemini model is not initialized.
-            if (!this.geminiModel) {
-                this.setState(prevState => ({
-                    geminiOutput: [
-                        ...prevState.geminiOutput,
-                        { type: 'error', message: 'Gemini model is not initialized.', timestamp: Date.now() }
-                    ]
-                }));
-                return;
-            }
-    
-            // Display "Thinking..." message while waiting for Gemini's response.
-            const thinkingTimestamp = Date.now();
+            // Update state with Gemini's response, replacing the thinking message.
             this.setState(prevState => ({
-                geminiOutput: [
-                    ...prevState.geminiOutput,
-                    { type: 'user', message: userInput, hasScreenshot: !!screenshotBase64, timestamp: Date.now() }, // Add user message immediately
-                    { type: 'gemini-thinking', message: 'Gemini: Thinking...', timestamp: thinkingTimestamp }
-                ]
+                geminiOutput: prevState.geminiOutput.map(msg =>
+                    msg.id === thinkingMessageId
+                        ? { ...msg, type: 'gemini', message: text }
+                        : msg
+                ),
+                submitting: false // Reset submitting flag
             }));
-            this.forceUpdate(); // Force re-render to show thinking message immediately
     
-            try {
-                // Call the Gemini API to generate content.
-                const result = await this.geminiModel.generateContent({ contents: [{ role: "user", parts }] });
-                const response = await result.response;
-                const text = response.text();
-    
-                // Update state with Gemini's response, removing the thinking message.
-                this.setState(prevState => ({
-                    geminiOutput: prevState.geminiOutput
-                        .filter(msg => !(msg.type === 'gemini-thinking' && msg.timestamp === thinkingTimestamp))
-                        .concat([{ type: 'gemini', message: text, timestamp: Date.now() }])
-                }));
-                this.forceUpdate(); // Force re-render to show Gemini's response
-    
-            } catch (error) {
-                console.error("Gemini error:", error);
-                // Display error message if the API call fails.
-                this.setState(prevState => ({
-                    geminiOutput: [
-                        ...prevState.geminiOutput.filter(msg => msg.type !== 'gemini-thinking'),
-                        { type: 'error', message: `Gemini: Error: ${error.message}`, timestamp: Date.now() }
-                    ]
-                }));
-                this.forceUpdate(); // Force re-render to show error message
-            }
+        } catch (error) {
+            console.error("Gemini error:", error);
+            // Display error message if the API call fails, replacing the thinking message.
+            this.setState(prevState => ({
+                geminiOutput: prevState.geminiOutput.map(msg =>
+                    msg.id === thinkingMessageId
+                        ? { ...msg, type: 'error', message: `Gemini: Error: ${error.message}` }
+                        : msg
+                ),
+                submitting: false // Reset submitting flag
+            }));
         }
     }
     
@@ -403,7 +429,8 @@ class Blocks extends React.Component {
             this.props.stageSize !== nextProps.stageSize ||
             this.state.showGeminiChat !== nextState.showGeminiChat ||
             this.state.includeScreenshot !== nextState.includeScreenshot || // Include new state
-            this.state.geminiOutput !== nextState.geminiOutput // Include geminiOutput for chat updates
+            this.state.geminiOutput !== nextState.geminiOutput || // Include geminiOutput for chat updates
+            this.state.submitting !== nextState.submitting // Include submitting state
         );
     }
     componentDidUpdate (prevProps) {
@@ -832,8 +859,8 @@ class Blocks extends React.Component {
                             borderRadius: '4px',
                             whiteSpace: 'pre-wrap' }}
                         >
-                            {this.state.geminiOutput.map((chatItem, index) => (
-                                <div key={chatItem.timestamp || index} style={{ marginBottom: '8px' }}>
+                            {this.state.geminiOutput.map(chatItem => (
+                                <div key={chatItem.id} style={{ marginBottom: '8px' }}>
                                     {chatItem.type === 'user' && (
                                         <strong style={{ color: '#007bff' }}>
                                             User: {chatItem.hasScreenshot && '(with screenshot) '}
@@ -875,13 +902,15 @@ class Blocks extends React.Component {
                                 />
                                 <button
                                     onClick={this.handleGeminiInputSubmit}
+                                    // Disable button while submitting to prevent multiple clicks
+                                    disabled={this.state.submitting} 
                                     style={{
                                         padding: '8px 15px',
                                         backgroundColor: '#4B90FF',
                                         color: 'white',
                                         border: 'none',
                                         borderRadius: '4px',
-                                        cursor: 'pointer',
+                                        cursor: this.state.submitting ? 'not-allowed' : 'pointer',
                                         flexShrink: 0
                                     }}
                                 >
