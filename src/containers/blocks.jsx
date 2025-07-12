@@ -6,7 +6,6 @@ import PropTypes from 'prop-types';
 import React from 'react';
 import VMScratchBlocks from '../lib/blocks';
 import VM from 'scratch-vm';
-
 import log from '../lib/log.js';
 import Prompt from './prompt.jsx';
 import BlocksComponent from '../components/blocks/blocks.jsx';
@@ -20,7 +19,6 @@ import DragConstants from '../lib/drag-constants';
 import defineDynamicBlock from '../lib/define-dynamic-block';
 import {DEFAULT_THEME, getColorsForTheme, themeMap} from '../lib/themes';
 import {injectExtensionBlockTheme, injectExtensionCategoryTheme} from '../lib/themes/blockHelpers';
-
 import {connect} from 'react-redux'; // Make sure connect is imported
 import {updateToolbox} from '../reducers/toolbox';
 import {activateColorPicker} from '../reducers/color-picker';
@@ -29,15 +27,12 @@ import {activateCustomProcedures, deactivateCustomProcedures} from '../reducers/
 import {setConnectionModalExtensionId} from '../reducers/connection-modal';
 import {updateMetrics} from '../reducers/workspace-metrics';
 import {isTimeTravel2020} from '../reducers/time-travel';
-
 import {
     activateTab,
     SOUNDS_TAB_INDEX
 } from '../reducers/editor-tab';
-
-import { GoogleGenerativeAI } from '@google/generative-ai';
-
-import html2canvas from 'html2canvas';
+import { GoogleGenerativeAI } from '@google/generative-ai'; // This import is not used directly here, as the model is initialized via fetch.
+import html2canvas from 'html2canvas'; // This import is not used directly here, as the screenshot function is custom.
 
 const addFunctionListener = (object, property, callback) => {
     const oldFn = object[property];
@@ -56,6 +51,7 @@ const DroppableBlocks = DropAreaHOC([
 // you would use a backend to handle API calls.
 // For this example, we'll assume REACT_APP_GEMINI_API_KEY is available
 // in the environment for demonstration purposes.
+// Note: This GEMINI_API_KEY is not directly used in this file as API calls are proxied through the backend.
 const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 
 class Blocks extends React.Component {
@@ -97,7 +93,6 @@ class Blocks extends React.Component {
         this.ScratchBlocks.prompt = this.handlePromptStart;
         this.ScratchBlocks.statusButtonCallback = this.handleConnectionModalStart;
         this.ScratchBlocks.recordSoundCallback = this.handleOpenSoundRecorder;
-
         this.state = {
             prompt: null,
             showGeminiChat: false,
@@ -108,12 +103,9 @@ class Blocks extends React.Component {
         };
         this.onTargetsUpdate = debounce(this.onTargetsUpdate, 100);
         this.toolboxUpdateQueue = [];
-
         this.geminiModel = null;
         this.initializeGemini();
-
         this.inputRef = React.createRef();
-        
     }
 
     // This lifecycle method is used to keep the cursor at the end of the input
@@ -141,16 +133,15 @@ class Blocks extends React.Component {
                         screenshotBase64: contents[0].parts.find(p => p.inlineData)?.inlineData?.data
                     })
                 });
-        
+
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({}));
                     const message = errorData?.error || 'Failed to fetch from backend';
                     throw new Error(message);
                 }
-        
+
                 const data = await response.json();
                 if (!data.message) throw new Error("Gemini backend returned no message field");
-        
                 return {
                     response: {
                         text: () => data.message
@@ -159,7 +150,6 @@ class Blocks extends React.Component {
             }
         };
     }
-    
 
     // Handles changes to the Gemini input text field.
     handleGeminiInputChange(e) {
@@ -170,7 +160,7 @@ class Blocks extends React.Component {
     handleIncludeScreenshotChange(e) {
         this.setState({ includeScreenshot: e.target.checked });
     }
-    
+
     // Handles the submission of the Gemini input, either by Enter key or button click.
     async handleGeminiInputSubmit(e) {
         // Prevent default form submission behavior (e.g., if input is inside a form)
@@ -237,17 +227,14 @@ class Blocks extends React.Component {
         // Extract VM context to provide to Gemini for better understanding.
         const target = this.props.vm.editingTarget;
         let contextText = 'Project context:\n';
-
         if (target) {
             const spriteName = target.getName();
             const costume = target.getCostumes()?.[target.currentCostume];
             const blocks = target.blocks._blocks;
-
             const activeBlocks = Object.values(blocks)
                 .filter(b => b.opcode && !b.shadow)
                 .map(b => b.opcode)
                 .join(', ');
-
             contextText += `- Sprite: ${spriteName}\n`;
             contextText += `- Costume: ${costume?.name || 'Unknown'}\n`;
             contextText += `- Position: (${target.x}, ${target.y})\n`;
@@ -267,31 +254,30 @@ class Blocks extends React.Component {
                     console.warn("⚠️ WebGL canvas not found in known containers.");
                     return null;
                 }
-        
+
                 // Flush WebGL context to ensure all drawing commands are executed.
                 const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
                 if (gl) gl.flush();
-        
+
                 // Wait for rendering to complete (two requestAnimationFrame calls)
                 await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
                 // Add a small timeout for good measure, allowing the browser to fully render.
                 await new Promise(resolve => setTimeout(resolve, 100));
-        
+
                 // Create an offscreen canvas to draw the screenshot.
                 const offscreen = document.createElement('canvas');
                 offscreen.width = canvas.width;
                 offscreen.height = canvas.height;
                 const ctx = offscreen.getContext('2d');
                 ctx.drawImage(canvas, 0, 0);
-        
+
                 // Check if the captured image is entirely black (common issue with WebGL screenshots).
                 const data = ctx.getImageData(0, 0, offscreen.width, offscreen.height).data;
                 const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
-        
                 if (isBlack) {
                     console.warn("⚠️ Screenshot is completely black.");
                 }
-        
+
                 // Convert the canvas content to a base64 PNG data URL.
                 const base64 = offscreen.toDataURL('image/png').split(',')[1];
                 console.log("✅ Screenshot captured after render wait");
@@ -311,13 +297,11 @@ class Blocks extends React.Component {
                     const img = new Image();
                     img.src = 'data:image/png;base64,' + base64;
                     await new Promise(resolve => (img.onload = resolve));
-        
                     const tempCanvas = document.createElement('canvas');
                     tempCanvas.width = img.width;
                     tempCanvas.height = img.height;
                     const ctx = tempCanvas.getContext('2d');
                     ctx.drawImage(img, 0, 0);
-        
                     const data = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
                     const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
                     if (!isBlack) {
@@ -330,7 +314,7 @@ class Blocks extends React.Component {
             console.warn("⚠️ All screenshot attempts resulted in black images.");
             return null;
         }
-        
+
         const parts = [{ text: userInput }];
         if (screenshotBase64) {
             parts.push({
@@ -340,7 +324,7 @@ class Blocks extends React.Component {
                 }
             });
         }
-    
+
         try {
             // Call the Gemini API to generate content.
             let response;
@@ -353,6 +337,7 @@ class Blocks extends React.Component {
             } catch (err) {
                 throw new Error("Gemini failed to generate a response: " + err.message);
             }
+
             const text = response.text();
 
             // Update state with Gemini's response, replacing the thinking message.
@@ -364,7 +349,6 @@ class Blocks extends React.Component {
                 ),
                 submitting: false // Reset submitting flag
             }));
-    
         } catch (error) {
             console.error("Gemini error:", error);
             // Display error message if the API call fails, replacing the thinking message.
@@ -378,13 +362,12 @@ class Blocks extends React.Component {
             }));
         }
     }
-    
+
     componentDidMount () {
         this.ScratchBlocks = VMScratchBlocks(this.props.vm, this.props.useCatBlocks);
         this.ScratchBlocks.prompt = this.handlePromptStart;
         this.ScratchBlocks.statusButtonCallback = this.handleConnectionModalStart;
         this.ScratchBlocks.recordSoundCallback = this.handleOpenSoundRecorder;
-
         this.ScratchBlocks.FieldColourSlider.activateEyedropper_ = this.props.onActivateColorPicker;
         this.ScratchBlocks.Procedures.externalProcedureDefCallback = this.props.onActivateCustomProcedures;
         this.ScratchBlocks.ScratchMsgs.setLocale(this.props.locale);
@@ -395,7 +378,6 @@ class Blocks extends React.Component {
             {rtl: this.props.isRtl, toolbox: this.props.toolboxXML, colours: getColorsForTheme(this.props.theme)}
         );
         this.workspace = this.ScratchBlocks.inject(this.blocks, workspaceConfig);
-
         const toolboxWorkspace = this.workspace.getFlyout().getWorkspace();
 
         const varListButtonCallback = type =>
@@ -409,7 +391,6 @@ class Blocks extends React.Component {
         toolboxWorkspace.registerButtonCallback('MAKE_A_PROCEDURE', procButtonCallback);
 
         this._renderedToolboxXML = this.props.toolboxXML;
-
         this.setToolboxRefreshEnabled = this.workspace.setToolboxRefreshEnabled.bind(this.workspace);
         this.workspace.setToolboxRefreshEnabled = () => {
             this.setToolboxRefreshEnabled(false);
@@ -422,6 +403,7 @@ class Blocks extends React.Component {
         if (this.props.isVisible) {
             this.setLocale();
         }
+
         // Patch the canvas getContext to preserve drawing buffer,
         // which is necessary for screenshot capture.
         const canvas = document.querySelector('.stage-wrapper canvas');
@@ -438,8 +420,8 @@ class Blocks extends React.Component {
             };
             canvas._patched = true;
         }
-
     }
+
     shouldComponentUpdate (nextProps, nextState) {
         // Optimize re-renders by checking only relevant props and state.
         return (
@@ -457,17 +439,16 @@ class Blocks extends React.Component {
             this.state.submitting !== nextState.submitting // Include submitting state
         );
     }
+
     componentDidUpdate (prevProps) {
         // Hide ScratchBlocks chaff (e.g., context menus) when any modal is visible.
         if (this.props.anyModalVisible && !prevProps.anyModalVisible) {
             this.ScratchBlocks.hideChaff();
         }
-
         // Request toolbox update if visibility is true and toolbox XML has changed.
         if (this.props.isVisible && this.props.toolboxXML !== this._renderedToolboxXML) {
             this.requestToolboxUpdate();
         }
-
         // If visibility hasn't changed, but stage size has, dispatch resize event.
         if (this.props.isVisible === prevProps.isVisible) {
             if (this.props.stageSize !== prevProps.stageSize) {
@@ -475,7 +456,6 @@ class Blocks extends React.Component {
             }
             return;
         }
-
         // Handle visibility changes for the workspace.
         if (this.props.isVisible) {
             this.workspace.setVisible(true);
@@ -485,24 +465,26 @@ class Blocks extends React.Component {
                 this.props.vm.refreshWorkspace();
                 this.requestToolboxUpdate();
             }
-
             window.dispatchEvent(new Event('resize'));
         } else {
             this.workspace.setVisible(false);
         }
     }
+
     componentWillUnmount () {
         this.detachVM();
         this.workspace.dispose();
         clearTimeout(this.toolboxUpdateTimeout);
         this.props.vm.clearFlyoutBlocks();
     }
+
     requestToolboxUpdate () {
         clearTimeout(this.toolboxUpdateTimeout);
         this.toolboxUpdateTimeout = setTimeout(() => {
             this.updateToolbox();
         }, 0);
     }
+
     setLocale () {
         this.ScratchBlocks.ScratchMsgs.setLocale(this.props.locale);
         this.props.vm.setLocale(this.props.locale, this.props.messages)
@@ -518,12 +500,10 @@ class Blocks extends React.Component {
 
     updateToolbox () {
         this.toolboxUpdateTimeout = false;
-
         const categoryId = this.workspace.toolbox_.getSelectedCategoryId();
         const offset = this.workspace.toolbox_.getCategoryScrollOffset();
         this.workspace.updateToolbox(this.props.toolboxXML);
         this._renderedToolboxXML = this.props.toolboxXML;
-
         this.workspace.toolboxRefreshEnabled_ = true;
 
         const currentCategoryPos = this.workspace.toolbox_.getCategoryPositionById(categoryId);
@@ -567,6 +547,7 @@ class Blocks extends React.Component {
         this.props.vm.addListener('PERIPHERAL_CONNECTED', this.handleStatusButtonUpdate);
         this.props.vm.addListener('PERIPHERAL_DISCONNECTED', this.handleStatusButtonUpdate);
     }
+
     detachVM () {
         this.props.vm.removeListener('SCRIPT_GLOW_ON', this.onScriptGlowOn);
         this.props.vm.removeListener('SCRIPT_GLOW_OFF', this.onScriptGlowOff);
@@ -602,6 +583,7 @@ class Blocks extends React.Component {
             });
         }
     }
+
     onWorkspaceMetricsChange () {
         const target = this.props.vm.editingTarget;
         if (target && target.id) {
@@ -615,27 +597,32 @@ class Blocks extends React.Component {
             }, 0);
         }
     }
+
     onScriptGlowOn (data) {
         this.workspace.glowStack(data.id, true);
     }
+
     onScriptGlowOff (data) {
         this.workspace.glowStack(data.id, false);
     }
+
     onBlockGlowOn (data) {
         this.workspace.glowBlock(data.id, true);
     }
+
     onBlockGlowOff (data) {
         this.workspace.glowBlock(data.id, false);
     }
+
     onVisualReport (data) {
         this.workspace.reportValue(data.id, data.value);
     }
+
     getToolboxXML () {
         try {
             let {editingTarget: target, runtime} = this.props.vm;
             const stage = runtime.getTargetForStage();
             if (!target) target = stage;
-
             const stageCostumes = stage.getCostumes();
             const targetCostumes = target.getCostumes();
             const targetSounds = target.getSounds();
@@ -653,16 +640,15 @@ class Blocks extends React.Component {
             return null;
         }
     }
+
     onWorkspaceUpdate (data) {
         const toolboxXML = this.getToolboxXML();
         if (toolboxXML) {
             this.props.updateToolboxState(toolboxXML);
         }
-
         if (this.props.vm.editingTarget && !this.props.workspaceMetrics.targets[this.props.vm.editingTarget.id]) {
             this.onWorkspaceMetricsChange();
         }
-
         this.workspace.removeChangeListener(this.props.vm.blockListener);
         const dom = this.ScratchBlocks.Xml.textToDom(data.xml);
         try {
@@ -674,7 +660,6 @@ class Blocks extends React.Component {
             log.error(error);
         }
         this.workspace.addChangeListener(this.props.vm.blockListener);
-
         if (this.props.vm.editingTarget && this.props.workspaceMetrics.targets[this.props.vm.editingTarget.id]) {
             const {scrollX, scrollY, scale} = this.props.workspaceMetrics.targets[this.props.vm.editingTarget.id];
             this.workspace.scrollX = scrollX;
@@ -682,9 +667,9 @@ class Blocks extends React.Component {
             this.workspace.scale = scale;
             this.workspace.resize();
         }
-
         this.workspace.clearUndo();
     }
+
     handleMonitorsUpdate (monitors) {
         const flyout = this.workspace.getFlyout();
         for (const monitor of monitors.values()) {
@@ -697,6 +682,7 @@ class Blocks extends React.Component {
             }
         }
     }
+
     handleExtensionAdded (categoryInfo) {
         const defineBlocks = blockInfoArray => {
             if (blockInfoArray && blockInfoArray.length > 0) {
@@ -709,7 +695,6 @@ class Blocks extends React.Component {
                         staticBlocksJson.push(injectExtensionBlockTheme(blockInfo.json, this.props.theme));
                     }
                 });
-
                 this.ScratchBlocks.defineBlocksWithJsonArray(staticBlocksJson);
                 dynamicBlocksInfo.forEach(blockInfo => {
                     const extendedOpcode = `${categoryInfo.id}_${blockInfo.info.opcode}`;
@@ -731,22 +716,25 @@ class Blocks extends React.Component {
             this.props.updateToolboxState(toolboxXML);
         }
     }
+
     handleBlocksInfoUpdate (categoryInfo) {
         this.handleExtensionAdded(categoryInfo);
     }
+
     handleCategorySelected (categoryId) {
         const extension = extensionData.find(ext => ext.extensionId === categoryId);
         if (extension && extension.launchPeripheralConnectionFlow) {
             this.handleConnectionModalStart(categoryId);
         }
-
         this.withToolboxUpdates(() => {
             this.workspace.toolbox_.setSelectedCategoryById(categoryId);
         });
     }
+
     setBlocks (blocks) {
         this.blocks = blocks;
     }
+
     handlePromptStart (message, defaultValue, callback, optTitle, optVarType) {
         const p = {prompt: {callback, message, defaultValue}};
         p.prompt.title = optTitle ? optTitle :
@@ -760,12 +748,15 @@ class Blocks extends React.Component {
         p.prompt.showCloudOption = (optVarType === this.ScratchBlocks.SCALAR_VARIABLE_TYPE) && this.props.canUseCloud;
         this.setState(p);
     }
+
     handleConnectionModalStart (extensionId) {
         this.props.onOpenConnectionModal(extensionId);
     }
+
     handleStatusButtonUpdate () {
         this.ScratchBlocks.refreshStatusButtons(this.workspace);
     }
+
     handleOpenSoundRecorder () {
         this.props.onOpenSoundRecorder();
     }
@@ -777,15 +768,18 @@ class Blocks extends React.Component {
             variableOptions);
         this.handlePromptClose();
     }
+
     handlePromptClose () {
         this.setState({prompt: null});
     }
+
     handleCustomProceduresClose (data) {
         this.props.onRequestCloseCustomProcedures(data);
         const ws = this.workspace;
         ws.refreshToolboxSelection_();
         ws.toolbox_.scrollToCategoryById('myBlocks');
     }
+
     handleDrop (dragInfo) {
         fetch(dragInfo.payload.bodyUrl)
             .then(response => response.json())
@@ -821,10 +815,19 @@ class Blocks extends React.Component {
             onRequestCloseCustomProcedures,
             toolboxXML,
             updateMetrics: updateMetricsProp,
+            updateToolboxState, // Destructure this prop so it's not passed to DOM element
             useCatBlocks,
             workspaceMetrics,
-            ...props
+            ...props // Capture remaining props
         } = this.props;
+
+        // Filter out props that are not valid for DOM elements
+        const filteredProps = Object.keys(props).reduce((acc, key) => {
+            if (!['onActivateCustomProcedures'].includes(key)) { // Add other props to filter if needed
+                acc[key] = props[key];
+            }
+            return acc;
+        }, {});
 
         return (
             <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -853,7 +856,7 @@ class Blocks extends React.Component {
                 >
                     {this.state.showGeminiChat ? '▲ Close Gemini Chat' : '▼ Talk to Gemini'}
                 </div>
-        
+
                 {/* Gemini Chat Interface */}
                 {this.state.showGeminiChat && (
                     <div
@@ -874,7 +877,7 @@ class Blocks extends React.Component {
                         }}
                     >
                         {/* Chat output area */}
-                        <div style={{ 
+                        <div style={{
                             flexGrow: 1,
                             overflowY: 'auto',
                             marginBottom: '10px',
@@ -896,6 +899,7 @@ class Blocks extends React.Component {
                                 </div>
                             ))}
                         </div>
+
                         {/* Input field and screenshot option */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -914,7 +918,7 @@ class Blocks extends React.Component {
                                 <input
                                     type="text"
                                     placeholder="Type your message..."
-                                    onKeyDown={this.handleGeminiInputSubmit} 
+                                    onKeyDown={this.handleGeminiInputSubmit}
                                     ref={this.inputRef}
                                     style={{
                                         flexGrow: 1,
@@ -927,7 +931,7 @@ class Blocks extends React.Component {
                                 <button
                                     onClick={this.handleGeminiInputSubmit}
                                     // Disable button while submitting to prevent multiple clicks
-                                    disabled={this.state.submitting} 
+                                    disabled={this.state.submitting}
                                     style={{
                                         padding: '8px 15px',
                                         backgroundColor: '#4B90FF',
@@ -948,9 +952,9 @@ class Blocks extends React.Component {
                 <DroppableBlocks
                     componentRef={this.setBlocks}
                     onDrop={this.handleDrop}
-                    {...props}
+                    {...filteredProps}
                 />
-        
+
                 {this.state.prompt ? (
                     <Prompt
                         defaultValue={this.state.prompt.defaultValue}
@@ -965,7 +969,7 @@ class Blocks extends React.Component {
                         onOk={this.handlePromptCallback}
                     />
                 ) : null}
-        
+
                 {extensionLibraryVisible ? (
                     <ExtensionLibrary
                         vm={vm}
@@ -973,7 +977,7 @@ class Blocks extends React.Component {
                         onRequestClose={onRequestCloseExtensionLibrary}
                     />
                 ) : null}
-        
+
                 {customProceduresVisible ? (
                     <CustomProcedures
                         options={{ media: options.media }}
@@ -982,7 +986,6 @@ class Blocks extends React.Component {
                 ) : null}
             </div>
         );
-
     }
 }
 
@@ -1084,4 +1087,3 @@ export default connect(
     mapStateToProps,
     mapDispatchToProps
 )(Blocks);
-
