@@ -7,7 +7,8 @@ WebAudioTestAPI.setState({
 import React from 'react';
 import configureStore from 'redux-mock-store';
 import {mount} from 'enzyme';
-import VM from 'scratch-vm';
+import VM from 'scratch-vm-for-gemini-chatbot';
+;
 import {LoadingState} from '../../../src/reducers/project-state';
 
 import vmManagerHOC from '../../../src/lib/vm-manager-hoc.jsx';

@@ -2,7 +2,8 @@ import bindAll from 'lodash.bindall';
 import React from 'react';
 import PropTypes from 'prop-types';
 import {connect} from 'react-redux';
-import VM from 'scratch-vm';
+import VM from 'scratch-vm-for-gemini-chatbot';
+;
 
 import collectMetadata from '../lib/collect-metadata';
 import log from '../lib/log';

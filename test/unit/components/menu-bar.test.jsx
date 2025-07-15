@@ -7,7 +7,8 @@ import {DEFAULT_THEME} from '../../../src/lib/themes';
 
 import configureStore from 'redux-mock-store';
 import {Provider} from 'react-redux';
-import VM from 'scratch-vm';
+import VM from 'scratch-vm-for-gemini-chatbot';
+;
 
 describe('MenuBar Component', () => {
     const store = configureStore()({

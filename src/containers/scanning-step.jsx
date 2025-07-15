@@ -2,7 +2,8 @@ import PropTypes from 'prop-types';
 import React from 'react';
 import bindAll from 'lodash.bindall';
 import ScanningStepComponent from '../components/connection-modal/scanning-step.jsx';
-import VM from 'scratch-vm';
+import VM from 'scratch-vm-for-gemini-chatbot';
+;
 
 class ScanningStep extends React.Component {
     constructor (props) {

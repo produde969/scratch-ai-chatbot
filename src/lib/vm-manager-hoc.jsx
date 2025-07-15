@@ -3,7 +3,8 @@ import PropTypes from 'prop-types';
 import React from 'react';
 import {connect} from 'react-redux';
 
-import VM from 'scratch-vm';
+import VM from 'scratch-vm-for-gemini-chatbot';
+;
 import AudioEngine from 'scratch-audio';
 
 import {setProjectUnchanged} from '../reducers/project-changed';

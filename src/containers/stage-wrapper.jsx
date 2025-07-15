@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React from 'react';
-import VM from 'scratch-vm';
+import VM from 'scratch-vm-for-gemini-chatbot';
+;
 import {STAGE_DISPLAY_SIZES} from '../lib/layout-constants.js';
 import StageWrapperComponent from '../components/stage-wrapper/stage-wrapper.jsx';
 

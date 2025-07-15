@@ -2,7 +2,8 @@ import PropTypes from 'prop-types';
 import React from 'react';
 import bindAll from 'lodash.bindall';
 import PromptComponent from '../components/prompt/prompt.jsx';
-import VM from 'scratch-vm';
+import VM from 'scratch-vm-for-gemini-chatbot';
+;
 
 class Prompt extends React.Component {
     constructor (props) {
