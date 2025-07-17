@@ -1,14 +1,13 @@
-//backdrop-library.jsx
 
+
+// containers/backdrop-library.jsx
 import bindAll from 'lodash.bindall';
 import PropTypes from 'prop-types';
 import React from 'react';
-import { injectIntl, intlShape, defineMessages } from 'react-intl';
-import VM from 'scratch-vm';
-
-import backdropLibraryContent from '../lib/libraries/backdrops.json';
-import backdropTags from '../lib/libraries/backdrop-tags';
+import {injectIntl, intlShape, defineMessages} from 'react-intl';
 import LibraryComponent from '../components/library/library.jsx';
+import backdropLibraryContent from '../lib/libraries/local-backdrops.json';
+import backdropTags from '../lib/libraries/backdrop-tags';
 
 const messages = defineMessages({
     libraryTitle: {
@@ -21,76 +20,51 @@ const messages = defineMessages({
 class BackdropLibrary extends React.PureComponent {
     constructor(props) {
         super(props);
-        bindAll(this, [
-            'handleItemSelect'
-        ]);
+        bindAll(this, ['handleItemSelect']);
     }
 
     async handleItemSelect(item) {
-        console.log("[BackdropLibrary] onItemSelected →", item);
+        console.log('[BackdropLibrary] onItemSelected →', item);
+        const {md5ext, name, dataFormat} = item;
+        const storageModule = this.props.vm.runtime.storage;
+        const assetType =
+            dataFormat === 'svg'
+                ? storageModule.AssetType.ImageVector
+                : storageModule.AssetType.ImageBitmap;
 
         try {
-            const costumeUrl = `https://cdn.assets.scratch.mit.edu/internalapi/asset/${item.md5ext}/get/`;
-            const response = await fetch(costumeUrl);
-            const blob = await response.blob();
-            console.log("[BackdropLibrary] blob from fetch:", blob);
-            console.log("[BackdropLibrary] blob type:", blob.type);
+            // Fetch raw data
+            const url = `/static/backdrops/${md5ext}`;
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Network ${response.status} fetching ${url}`);
+            const buffer = await response.arrayBuffer();
+            const array = new Uint8Array(buffer);
 
-            const extension = item.md5ext.split('.').pop();
-            const filename = `${item.name}.${extension}`;
+            // Create asset with correct signature
+            const asset = storageModule.createAsset(
+                assetType,
+                dataFormat,
+                array,
+                md5ext.split('.')[0],
+                false
+            );
 
-            let correctedType = blob.type;
-            if (correctedType === 'application/octet-stream') {
-                if (item.dataFormat === 'png') {
-                    correctedType = 'image/png';
-                } else if (item.dataFormat === 'svg') {
-                    correctedType = 'image/svg+xml';
-                }
-            }
-
-            const file = new File([blob], filename, { type: correctedType });
-            console.log("[BackdropLibrary] constructed File:", file);
-
-            const stage = this.props.vm.runtime.getTargetForStage();
-            console.log("[BackdropLibrary] adding to stage ID:", stage.id);
-
-            const reader = new FileReader();
-
-            reader.onload = async (e) => {
-                try {
-                    const contents = item.dataFormat === 'svg'
-                        ? e.target.result
-                        : new Uint8Array(e.target.result);
-
-                    const costumeObject = {
-                        name: item.name,
-                        assetId: item.assetId,
-                        md5ext: item.md5ext,
-                        dataFormat: item.dataFormat,
-                        bitmapResolution: item.bitmapResolution,
-                        rotationCenterX: item.rotationCenterX,
-                        rotationCenterY: item.rotationCenterY
-                    };
-
-                    console.log("[BackdropLibrary] reader.result type:", typeof contents, contents);
-
-                    await this.props.vm.addBackdrop(costumeObject, contents, stage.id);
-
-                    console.log("[BackdropLibrary] Backdrop added to stage");
-                    this.props.onRequestClose();
-                } catch (err) {
-                    console.error("[BackdropLibrary] Error adding backdrop:", err);
-                }
+            // Build costume/backdrop object
+            const costumeObject = {
+                name,
+                asset,
+                dataFormat: storageModule.DataFormat.PNG,
+                rotationCenterX: 240,
+                rotationCenterY: 180,
+                bitmapResolution: 1,
+                size: [480, 360]
             };
 
-            if (item.dataFormat === 'svg') {
-                reader.readAsText(file);
-            } else {
-                reader.readAsArrayBuffer(file);
-            }
-
-        } catch (err) {
-            console.error("[BackdropLibrary] Failed to import backdrop:", err);
+            // Add backdrop and redraw
+            await this.props.vm.addBackdrop(md5ext, costumeObject);
+            if (this.props.vm.renderer) this.props.vm.renderer.draw();
+        } catch (error) {
+            console.error('[BackdropLibrary] ❌ Error loading backdrop:', error);
         }
     }
 
@@ -111,8 +85,7 @@ class BackdropLibrary extends React.PureComponent {
 BackdropLibrary.propTypes = {
     intl: intlShape.isRequired,
     onRequestClose: PropTypes.func,
-    vm: PropTypes.instanceOf(VM).isRequired
+    vm: PropTypes.object.isRequired
 };
 
 export default injectIntl(BackdropLibrary);
-

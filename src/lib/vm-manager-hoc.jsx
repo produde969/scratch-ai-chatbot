@@ -1,10 +1,10 @@
+// vm-manager-hoc.jsx
 import bindAll from 'lodash.bindall';
 import PropTypes from 'prop-types';
 import React from 'react';
 import {connect} from 'react-redux';
 
 import VM from 'scratch-vm-for-gemini-chatbot';
-;
 import AudioEngine from 'scratch-audio';
 
 import {setProjectUnchanged} from '../reducers/project-changed';
@@ -15,86 +15,93 @@ import {
     projectError
 } from '../reducers/project-state';
 
-/*
- * Higher Order Component to manage events emitted by the VM
- * @param {React.Component} WrappedComponent component to manage VM events for
- * @returns {React.Component} connected component with vm events bound to redux
- */
 const vmManagerHOC = function (WrappedComponent) {
     class VMManager extends React.Component {
-        constructor (props) {
+        constructor(props) {
             super(props);
-            bindAll(this, [
-                'loadProject'
-            ]);
+            bindAll(this, ['loadProject']);
         }
-        componentDidMount () {
+
+        componentDidMount() {
             if (!this.props.vm.initialized) {
                 this.audioEngine = new AudioEngine();
                 this.props.vm.attachAudioEngine(this.audioEngine);
+
+                try {
+                    if (!this.props.vm.runtime.storage) {
+                        console.warn('[vm-manager-hoc] Storage module is not defined. Initializing storage...');
+                        const ScratchStorage = require('scratch-storage');
+                        const assetStorage = new ScratchStorage();
+
+                        // Remote Scratch CDN assets (projects & vector costumes)
+                        assetStorage.addWebStore(
+                            [
+                                ScratchStorage.AssetType.Project,
+                                ScratchStorage.AssetType.ImageVector
+                            ],
+                            ({assetId, dataFormat}) =>
+                                `https://assets.scratch.mit.edu/internalapi/asset/${assetId}.${dataFormat}/get/`
+                        );
+
+                        // Local backdrops (PNG & SVG)
+                        assetStorage.addWebStore(
+                            [
+                                ScratchStorage.AssetType.ImageBitmap,
+                                ScratchStorage.AssetType.ImageVector
+                            ],
+                            ({assetId, dataFormat}) =>
+                                `/static/backdrops/${assetId}.${dataFormat}`
+                        );
+
+                        // Attach storage to the VM and runtime
+                        this.props.vm.attachStorage(assetStorage);
+                        this.props.vm.runtime.attachStorage(assetStorage);
+                        console.log('[vm-manager-hoc] Storage attached:', assetStorage);
+                    }
+                } catch (err) {
+                    console.error('[vm-manager-hoc] Failed to attach storage:', err);
+                }
+
                 this.props.vm.setCompatibilityMode(true);
                 this.props.vm.initialized = true;
                 this.props.vm.setLocale(this.props.locale, this.props.messages);
             }
+
             if (!this.props.isPlayerOnly && !this.props.isStarted) {
                 this.props.vm.start();
             }
         }
-        componentDidUpdate (prevProps) {
-            // if project is in loading state, AND fonts are loaded,
-            // and they weren't both that way until now... load project!
+
+        componentDidUpdate(prevProps) {
             if (this.props.isLoadingWithId && this.props.fontsLoaded &&
                 (!prevProps.isLoadingWithId || !prevProps.fontsLoaded)) {
                 this.loadProject();
             }
-            // Start the VM if entering editor mode with an unstarted vm
             if (!this.props.isPlayerOnly && !this.props.isStarted) {
                 this.props.vm.start();
             }
         }
-        loadProject () {
+
+        loadProject() {
             return this.props.vm.loadProject(this.props.projectData)
                 .then(() => {
                     this.props.onLoadedProject(this.props.loadingState, this.props.canSave);
-                    // Wrap in a setTimeout because skin loading in
-                    // the renderer can be async.
                     setTimeout(() => this.props.onSetProjectUnchanged());
-
-                    // If the vm is not running, call draw on the renderer manually
-                    // This draws the state of the loaded project with no blocks running
-                    // which closely matches the 2.0 behavior, except for monitors–
-                    // 2.0 runs monitors and shows updates (e.g. timer monitor)
-                    // before the VM starts running other hat blocks.
-                    if (!this.props.isStarted) {
-                        // Wrap in a setTimeout because skin loading in
-                        // the renderer can be async.
+                    if (!this.props.isStarted && this.props.vm.renderer) {
                         setTimeout(() => this.props.vm.renderer.draw());
                     }
                 })
                 .catch(e => {
+                    console.error('[vm-manager-hoc] Failed to load project:', e);
                     this.props.onError(e);
                 });
         }
-        render () {
-            const {
-                /* eslint-disable no-unused-vars */
-                fontsLoaded,
-                loadingState,
-                locale,
-                messages,
-                isStarted,
-                onError: onErrorProp,
-                onLoadedProject: onLoadedProjectProp,
-                onSetProjectUnchanged,
-                projectData,
-                /* eslint-enable no-unused-vars */
-                isLoadingWithId: isLoadingWithIdProp,
-                vm,
-                ...componentProps
-            } = this.props;
+
+        render() {
+            const {vm, ...componentProps} = this.props;
             return (
                 <WrappedComponent
-                    isLoading={isLoadingWithIdProp}
+                    isLoading={this.props.isLoadingWithId}
                     vm={vm}
                     {...componentProps}
                 />
@@ -130,7 +137,7 @@ const vmManagerHOC = function (WrappedComponent) {
             messages: state.locales.messages,
             projectData: state.scratchGui.projectState.projectData,
             projectId: state.scratchGui.projectState.projectId,
-            loadingState: loadingState,
+            loadingState,
             isPlayerOnly: state.scratchGui.mode.isPlayerOnly,
             isStarted: state.scratchGui.vmStatus.started
         };
@@ -143,10 +150,8 @@ const vmManagerHOC = function (WrappedComponent) {
         onSetProjectUnchanged: () => dispatch(setProjectUnchanged())
     });
 
-    // Allow incoming props to override redux-provided props. Used to mock in tests.
-    const mergeProps = (stateProps, dispatchProps, ownProps) => Object.assign(
-        {}, stateProps, dispatchProps, ownProps
-    );
+    const mergeProps = (stateProps, dispatchProps, ownProps) =>
+        Object.assign({}, stateProps, dispatchProps, ownProps);
 
     return connect(
         mapStateToProps,

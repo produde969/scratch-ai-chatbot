@@ -9,17 +9,8 @@ const HtmlWebpackPlugin = require('html-webpack-plugin');
 
 const ScratchWebpackConfigBuilder = require('scratch-webpack-configuration');
 
-// const STATIC_PATH = process.env.STATIC_PATH || '/static';
-
 const commonHtmlWebpackPluginOptions = {
-    // Google Tag Manager ID
-    // Looks like 'GTM-XXXXXXX'
     gtm_id: process.env.GTM_ID || '',
-
-    // Google Tag Manager env & auth info for alterative GTM environments
-    // Looks like '&gtm_auth=0123456789abcdefghijklm&gtm_preview=env-00&gtm_cookies_win=x'
-    // Taken from the middle of: GTM -> Admin -> Environments -> (environment) -> Get Snippet
-    // Blank for production
     gtm_env_auth: process.env.GTM_ENV_AUTH || ''
 };
 
@@ -68,8 +59,6 @@ const baseConfig = new ScratchWebpackConfigBuilder(
                 to: 'static/blocks-media/high-contrast'
             },
             {
-                // overwrite some of the default block media with high-contrast versions
-                // this entry must come after copying scratch-blocks/media into the high-contrast directory
                 from: 'src/lib/themes/high-contrast/blocks-media',
                 to: 'static/blocks-media/high-contrast',
                 force: true
@@ -78,6 +67,10 @@ const baseConfig = new ScratchWebpackConfigBuilder(
                 context: 'node_modules/scratch-vm/dist/web',
                 from: 'extension-worker.{js,js.map}',
                 noErrorOnMissing: true
+            },
+            {
+                from: 'static/backdrops',
+                to: 'static/backdrops'
             }
         ]
     }));
@@ -86,7 +79,6 @@ if (!process.env.CI) {
     baseConfig.addPlugin(new webpack.ProgressPlugin());
 }
 
-// build the shipping library in `dist/`
 const distConfig = baseConfig.clone()
     .merge({
         entry: {
@@ -109,7 +101,6 @@ const distConfig = baseConfig.clone()
         })
     );
 
-// build the examples and debugging tools in `build/`
 const buildConfig = baseConfig.clone()
     .enableDevServer(process.env.PORT || 8601)
     .merge({
@@ -167,10 +158,6 @@ const buildConfig = baseConfig.clone()
         'process.env.REACT_APP_GEMINI_API_KEY': JSON.stringify(process.env.REACT_APP_GEMINI_API_KEY)
     }));
 
-// Skip building `dist/` unless explicitly requested
-// It roughly doubles build time and isn't needed for `scratch-gui` development
-// If you need non-production `dist/` for local dev, such as for `scratch-www` work, you can run something like:
-// `BUILD_MODE=dist npm run build`
 const buildDist = process.env.NODE_ENV === 'production' || process.env.BUILD_MODE === 'dist';
 
 module.exports = buildDist ?
