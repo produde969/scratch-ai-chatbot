@@ -31,27 +31,32 @@ class SpriteLibrary extends React.PureComponent {
         console.log("[SpriteLibrary] onItemSelected →", item);
         try {
             randomizeSpritePosition(item);
-    
+
             // 1. Download costume files
-            const costumeFiles = await Promise.all(item.costumes.map(async (costume, index) => {
-                const costumeUrl = `https://cdn.assets.scratch.mit.edu/internalapi/asset/${costume.md5ext}/get/`;
-                const response = await fetch(costumeUrl);
-                if (!response.ok) throw new Error(`Failed to fetch costume: ${costume.name}`);
-                const blob = await response.blob();
-                return new File([blob], `${costume.md5ext}`, { type: blob.type });
+            const costumeFiles = await Promise.all(item.costumes.map(async c => {
+                const url = `https://cdn.assets.scratch.mit.edu/internalapi/asset/${c.md5ext}/get/`;
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`Failed to fetch costume ${c.name}`);
+                const blob = await res.blob();
+                return new File([blob], c.md5ext, {type: blob.type});
             }));
-    
+
             // 2. Download sound files
-            const soundFiles = await Promise.all((item.sounds || []).map(async (sound, index) => {
-                const soundUrl = `https://cdn.assets.scratch.mit.edu/internalapi/asset/${sound.md5ext}/get/`;
-                const response = await fetch(soundUrl);
-                if (!response.ok) throw new Error(`Failed to fetch sound: ${sound.name}`);
-                const blob = await response.blob();
-                return new File([blob], `${sound.md5ext}`, { type: blob.type });
+            const allowedFormats = ["wav","wave","mp3"];
+            const soundFiles = await Promise.all((item.sounds || []).map(async s => {
+                const url = `https://cdn.assets.scratch.mit.edu/internalapi/asset/${s.md5ext}/get/`;
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`Failed to fetch sound ${s.name}`);
+                const blob = await res.blob();
+                // pick a valid dataFormat
+                const df = allowedFormats.includes(s.dataFormat) ? s.dataFormat : "wav";
+                return new File([blob], s.md5ext, {type: blob.type});
             }));
-    
-            // 3. Build sprite JSON
+
+            // 3. Build sprite JSON with objName + normalized dataFormats
             const spriteJSON = {
+                // SB2 needs objName:
+                objName: item.name,
                 name: item.name,
                 isStage: false,
                 variables: {},
@@ -60,24 +65,28 @@ class SpriteLibrary extends React.PureComponent {
                 blocks: {},
                 comments: {},
                 currentCostume: 0,
-                costumes: item.costumes.map(costume => ({
-                    name: costume.name,
-                    assetId: costume.md5ext.split('.')[0],
-                    md5ext: costume.md5ext,
-                    dataFormat: costume.dataFormat || costume.md5ext.split('.')[1],
-                    bitmapResolution: costume.bitmapResolution || 1,
-                    rotationCenterX: costume.rotationCenterX,
-                    rotationCenterY: costume.rotationCenterY
+                costumes: item.costumes.map(c => ({
+                    name: c.name,
+                    assetId: c.md5ext.split(".")[0],
+                    md5ext: c.md5ext,
+                    dataFormat: c.dataFormat || c.md5ext.split(".")[1],
+                    bitmapResolution: c.bitmapResolution || 1,
+                    rotationCenterX: c.rotationCenterX,
+                    rotationCenterY: c.rotationCenterY
                 })),
-                sounds: (item.sounds || []).map(sound => ({
-                    name: sound.name,
-                    assetId: sound.md5ext.split('.')[0],
-                    format: sound.format || sound.md5ext.split('.')[1],
-                    rate: sound.rate,
-                    sampleCount: sound.sampleCount,
-                    dataFormat: sound.format || sound.md5ext.split('.')[1],
-                    md5ext: sound.md5ext
-                })),
+                sounds: (item.sounds || []).map(s => {
+                    // normalize
+                    const fmt = allowedFormats.includes(s.dataFormat) ? s.dataFormat : "wav";
+                    return {
+                        name: s.name,
+                        assetId: s.md5ext.split(".")[0],
+                        md5ext: s.md5ext,
+                        dataFormat: fmt,
+                        format: fmt,
+                        rate: s.rate,
+                        sampleCount: s.sampleCount
+                    };
+                }),
                 volume: 100,
                 layerOrder: 1,
                 visible: true,
@@ -86,16 +95,16 @@ class SpriteLibrary extends React.PureComponent {
                 size: item.size || 100,
                 direction: item.direction || 90,
                 draggable: false,
-                rotationStyle: 'all around'
+                rotationStyle: "all around"
             };
-    
-            const jsonBlob = new Blob([JSON.stringify(spriteJSON)], { type: 'application/json' });
-            const jsonFile = new File([jsonBlob], 'sprite.json');
-    
-            // 4. Combine all files
+
+            const jsonBlob = new Blob([JSON.stringify(spriteJSON)], {type: "application/json"});
+            const jsonFile = new File([jsonBlob], "sprite.json");
+
+            // 4. Combine + import
             const allFiles = [...costumeFiles, ...soundFiles, jsonFile];
             await this.props.vm.importSprite(allFiles, true);
-    
+
             console.log("[SpriteLibrary] Sprite added using importSprite");
             this.props.onActivateBlocksTab();
         } catch (err) {
