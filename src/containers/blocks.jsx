@@ -846,7 +846,7 @@ class Blocks extends React.Component {
                         boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
                         fontWeight: 'bold',
                         fontSize: '16px',
-                        zIndex: 1000,
+                        zIndex: 10,
                         cursor: 'pointer',
                         borderTopLeftRadius: '6px',
                         borderTopRightRadius: '6px',
@@ -870,7 +870,7 @@ class Blocks extends React.Component {
                             border: '1px solid #ccc',
                             borderRadius: '8px',
                             boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                            zIndex: 999,
+                            zIndex: 10,
                             display: 'flex',
                             flexDirection: 'column',
                             padding: '10px'
