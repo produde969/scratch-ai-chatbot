@@ -1,5 +1,10 @@
 # Scratch-Gemini-Chatbot
 
+## ⚠️ NOTICE ⚠️
+
+Hello user, I would like to thank you for your interest in using this application. If your purpose of using my application is to perform any research or make any changes, I would love for you to do so! I would like to politely ask that I receive credit for creating the original scratch-ai-chatbot repo. Please inform me via email that you will be making changes to this project. That is all I ask. Thank you very much once again for using this application for your desired purpose.
+
+
 ## Installation
 
 To use this modified version of scratch you must have Git and Node.js installed
