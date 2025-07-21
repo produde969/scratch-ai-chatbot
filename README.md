@@ -30,7 +30,7 @@ You can clone the scratch-vm-for-gemini-chatbot repo by running the following pr
 ```bash
 git clone https://github.com/produde969/scratch-vm-for-gemini-chatbot.git
 ```
-To run the application run the following prompts:
+To link the vm to the scratch-ai-chatbot, run the following prompts:
 
 ```bash
 cd scratch-vm-for-gemini-chatbot
@@ -40,9 +40,24 @@ cd scratch-ai-chatbot
 npm link scratch-vm-for-gemini-chatbot
 ```
 
+*TO CONTINUE YOU MUST CREATE AN API KEY, PLEASE DO NOT REVEAL YOUR API KEY NO MATTER WHAT*
+
 Create an API key from ChatGPT, Google Gemini, Hugging Face etc. As long as the model is a Vision Language Model (VLM), the program should run properly.
 
 Inside of the scratch-ai-repo, you must create a folder called .env
+
+```bash
+scratch-ai-chatbot
+├── .env
+└── server
+```
+Move the .env file into the server file
+
+```bash
+scratch-ai-chatbot
+└── server
+    └── .env
+```
 
 Inside the .env file, create a variable named "GEMINI_API_KEY"
 
@@ -61,6 +76,8 @@ To run the application, enter the following command prompt:
 npm run dev-all
 ```
 Thank you once again for using this application. I hope you enjoy the additional features on scratch.
+
+Please contact me if you are having any problems running the application.
 
 
 
