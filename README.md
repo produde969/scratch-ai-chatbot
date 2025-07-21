@@ -40,7 +40,10 @@ cd scratch-ai-chatbot
 npm link scratch-vm-for-gemini-chatbot
 ```
 
-*TO CONTINUE YOU MUST CREATE AN API KEY, PLEASE DO NOT REVEAL YOUR API KEY NO MATTER WHAT*
+*TO CONTINUE YOU MUST CREATE A GEMINI API KEY, PLEASE DO NOT REVEAL YOUR API KEY NO MATTER WHAT*
+
+**ONLY GEMINI API KEY DOCUMENTATION IS AVAILABLE, DOCUMENTATION FOR CHATGPT AND OTHER API'S WILL BE AVAILABLE SOON**
+
 
 Create an API key from ChatGPT, Google Gemini, Hugging Face etc. As long as the model is a Vision Language Model (VLM), the program should run properly.
 
