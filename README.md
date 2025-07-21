@@ -1,13 +1,13 @@
 # Scratch-Gemini-Chatbot
 
-## ⚠️ NOTICE ⚠️
+## ⚠️ *NOTICE* ⚠️
 
-Hello user, I would like to thank you for your interest in using this application. If your purpose of using my application is to perform any research or make any changes, I would love for you to do so! I would like to politely ask that I receive credit for creating the original scratch-ai-chatbot repo. Please inform me via email that you will be making changes to this project. That is all I ask. Thank you very much once again for using this application for your desired purpose.
+Hello user, I would like to thank you for your interest in using this application. If your purpose of using the application is to perform any research or make any changes, I would love for you to do so! I would like to politely ask that I receive credit for creating the original scratch-ai-chatbot repo. Please inform me via email that you will be making changes to this project or using this for research. That is all I ask. Thank you very much once again for using this application for your desired purpose.
 
 
 ## Installation
 
-To use this modified version of scratch you must have Git and Node.js installed
+To install and use this modified version of scratch you must have Git and Node.js installed
 
 If you would like to set-up this application, enter the following prompts in your terminal:
 
@@ -19,11 +19,13 @@ npm install
 
 The application should now be installed
 
-## Running Application
+## Other pre-requisites to run application
+
+**Ensure you are not inside of the scratch-ai-chatbot when you are running the pre-requisites.**
 
 Running the application requires Node.js and a cloned version of the scratch-vm-for-gemini-chatbot repo.
 
-You can clone the scratch-vm-for-gemini-chatbot repo by running the following prompts:
+You can clone the scratch-vm-for-gemini-chatbot repo by running the following prompt in your terminal:
 
 ```bash
 git clone https://github.com/produde969/scratch-vm-for-gemini-chatbot.git
@@ -37,20 +39,28 @@ npm link
 cd scratch-ai-chatbot
 npm link scratch-vm-for-gemini-chatbot
 ```
-Now before running the code, you need to add the AI to do that, you need create an API key on ChatGPT, Google Gemini, Hugging Face etc. As long as the model is a Vision Language Model (VLM)
 
-Create a folder called ".env" and move it into the server folder. Inside of the .env file make a variable called "GEMINI_API_KEY" 
+Create an API key from ChatGPT, Google Gemini, Hugging Face etc. As long as the model is a Vision Language Model (VLM), the program should run properly.
 
-Then make the variable GEMINI_API_KEY equivalent to the API key
+Inside of the scratch-ai-repo, you must create a folder called .env
 
-Example: GEMINI_API_KEY = The_Actual_API_Key_You_Made
+Inside the .env file, create a variable named "GEMINI_API_KEY"
 
-Once you do all of these steps, run this
+Set GEMINI_API_KEY equivalent to your actual API key.
+
+For Example:
+
+```bash
+GEMINI_API_KEY=the_actual_api_key_you_have_created
+```
+## Running Application
+
+To run the application, enter the following command prompt:
 
 ```bash
 npm run dev-all
 ```
-You can now use AI inside of scratch.
+Thank you once again for using this application. I hope you enjoy the additional features on scratch.
 
 
 
