@@ -1,4 +1,4 @@
-# Scratch-Gemini-Chatbot
+# Scratch-AI-Chatbot
 
 ## ⚠️ *NOTICE* ⚠️
 
