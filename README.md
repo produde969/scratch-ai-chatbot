@@ -78,7 +78,3 @@ npm run dev-all
 Thank you once again for using this application. I hope you enjoy the additional features on scratch.
 
 Please contact me if you are having any problems running the application.
-
-
-
-
