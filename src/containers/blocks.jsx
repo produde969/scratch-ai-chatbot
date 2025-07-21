@@ -315,6 +315,13 @@ class Blocks extends React.Component {
             return null;
         }
 
+        //if you would like to remove the filter, remove the filterInstruction and wrappedPrompt variables
+        const filterInstruction = "You are a kind, caring, and helpful AI assistant. A child has entered the prompt I will be eventually giving you. Please ensure that your responses are all child safe and do not contain any terms that may harm the child in any way. If you are unsure about a response, please ask the child to clarify what they mean. Do not use any terms that may be considered inappropriate for children. If you are asked to do something that is not child safe, please refuse and explain why it is not appropriate while also not saying anything innapropriate for children. thank you very much for your help, here is their response. only respond to the prompt. USE THE SAME LOGIC IF GIVEN AN IMAGE, IF YOU DEEM AN IMAGE INNAPROPRIATE AND RECEIVE EVIDENCE THROUGH THE IMAGE THAT IT IS INNAPROPRIATE USE THE SAME LOGIC FROM RESPONSES ONTO THE IMAGE. Thank you once again for your help";
+
+        const wrappedPrompt =
+        `<text>${userInput}</text>\n` +
+        `<send_to_gemini>${filterInstruction}</send_to_gemini>`;
+
         const parts = [{ text: userInput }];
         if (screenshotBase64) {
             parts.push({
