@@ -88,7 +88,8 @@ class Blocks extends React.Component {
             'initializeGemini',
             'handleGeminiInputChange',
             'handleGeminiInputSubmit',
-            'handleIncludeScreenshotChange' // Bind the new handler
+            'handleIncludeScreenshotChange',
+            'handleAnalyzeNextMove' // Bind the new handler
         ]);
         this.ScratchBlocks.prompt = this.handlePromptStart;
         this.ScratchBlocks.statusButtonCallback = this.handleConnectionModalStart;
@@ -369,6 +370,117 @@ class Blocks extends React.Component {
             }));
         }
     }
+
+    async handleAnalyzeNextMove() {
+        if (this.state.submitting) return;
+        this.setState({ submitting: true });
+    
+        const userInput = "What is the best move? Please Write using  the following format, C4C5 is an example. C4 representing the starting square and  C5 representing the square that I want the  piece to go to. Please provide this notation and enter it inside of curly braces. LOOK VERY CAREFULLY AT PIECE'S AND THEIR COORDINATES ON THE BOARD. ONLY PROVIDE THE NOTATION, NOTHING ELSE";
+        const userMessageId = crypto.randomUUID();
+        const thinkingMessageId = crypto.randomUUID();
+    
+        this.setState(prevState => ({
+                geminiOutput: [
+                    ...prevState.geminiOutput,
+                    { id: userMessageId, type: 'user', message: '(Analyzing board...)', hasScreenshot: true, timestamp: Date.now() },
+                { id: thinkingMessageId, type: 'gemini-thinking', message: 'Gemini: Thinking...', timestamp: Date.now() }
+            ]
+        }));
+    
+        const screenshotBase64 = await this.captureCanvasScreenshotWithRetry();
+        const parts = [{ text: userInput }];
+        if (screenshotBase64) {
+            parts.push({
+                inlineData: {
+                    mimeType: "image/png",
+                    data: screenshotBase64
+                }
+            });
+        }
+    
+        try {
+            const result = await this.geminiModel.generateContent({ contents: [{ role: 'user', parts }] });
+            const text = result?.response?.text();
+    
+            this.setState(prevState => ({
+                geminiOutput: prevState.geminiOutput.map(msg =>
+                    msg.id === thinkingMessageId ? { ...msg, type: 'gemini', message: text } : msg
+                ),
+                submitting: false
+            }));
+        } catch (error) {
+            console.error('Gemini error:', error);
+            this.setState(prevState => ({
+                geminiOutput: prevState.geminiOutput.map(msg =>
+                    msg.id === thinkingMessageId
+                        ? { ...msg, type: 'error', message: `Gemini: Error: ${error.message}` }
+                        : msg
+                ),
+                submitting: false
+            }));
+        }
+    }
+    
+    // Add the retry screenshot function to the class:
+    captureCanvasScreenshotWithRetry = async (maxAttempts = 200, delay = 0.1) => {
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            const base64 = await this.captureCanvasScreenshot();
+            if (base64) {
+                const img = new Image();
+                img.src = 'data:image/png;base64,' + base64;
+                await new Promise(resolve => (img.onload = resolve));
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = img.width;
+                tempCanvas.height = img.height;
+                const ctx = tempCanvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                const data = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
+                const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
+                if (!isBlack) {
+                    console.log(`✅ Successful screenshot on attempt ${attempt + 1}`);
+                    return base64;
+                }
+            }
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+        console.warn("⚠️ All screenshot attempts resulted in black images.");
+        return null;
+    };
+    
+    // Add the screenshot capture function to the class:
+    captureCanvasScreenshot = async () => {
+        try {
+            const canvas = document.querySelector('.stage-wrapper canvas, .stage-and-target-wrapper canvas, .scratch-stage canvas, canvas');
+            if (!canvas) {
+                console.warn("⚠️ WebGL canvas not found in known containers.");
+                return null;
+            }
+            const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            if (gl) gl.flush();
+    
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            await new Promise(resolve => setTimeout(resolve, 100));
+    
+            const offscreen = document.createElement('canvas');
+            offscreen.width = canvas.width;
+            offscreen.height = canvas.height;
+            const ctx = offscreen.getContext('2d');
+            ctx.drawImage(canvas, 0, 0);
+    
+            const data = ctx.getImageData(0, 0, offscreen.width, offscreen.height).data;
+            const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
+            if (isBlack) {
+                console.warn("⚠️ Screenshot is completely black.");
+            }
+    
+            const base64 = offscreen.toDataURL('image/png').split(',')[1];
+            console.log("✅ Screenshot captured after render wait");
+            return base64;
+        } catch (err) {
+            console.error("❌ Screenshot capture failed:", err);
+            return null;
+        }
+    };    
 
     componentDidMount () {
         this.ScratchBlocks = VMScratchBlocks(this.props.vm, this.props.useCatBlocks);
@@ -951,6 +1063,22 @@ class Blocks extends React.Component {
                                 >
                                     Send
                                 </button>
+                                <button
+                                onClick={this.handleAnalyzeNextMove}
+                                disabled={this.state.submitting}
+                                style={{
+                                    marginTop: '10px',
+                                    padding: '8px 15px',
+                                    backgroundColor: '#28a745',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    cursor: this.state.submitting ? 'not-allowed' : 'pointer',
+                                    width: 'fit-content'
+                                }}
+                            >
+                                Gemini Makes Move
+                            </button>
                             </div>
                         </div>
                     </div>
