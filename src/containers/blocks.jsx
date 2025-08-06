@@ -375,7 +375,7 @@ class Blocks extends React.Component {
         if (this.state.submitting) return;
         this.setState({ submitting: true });
     
-        const userInput = "What is the best move? Please Write using  the following format, C4C5 is an example. C4 representing the starting square and  C5 representing the square that I want the  piece to go to. Please provide this notation and enter it inside of curly braces. LOOK VERY CAREFULLY AT PIECE'S AND THEIR COORDINATES ON THE BOARD. ONLY PROVIDE THE NOTATION, NOTHING ELSE";
+        const userInput = "What is the best move? Please Write using  the following format, C4C5 is an example. C4 representing the starting square and  C5 representing the square that I want the  piece to go to. LOOK VERY CAREFULLY AT PIECE'S AND THEIR COORDINATES ON THE BOARD. ONLY PROVIDE THE NOTATION, NOTHING ELSE";
         const userMessageId = crypto.randomUUID();
         const thinkingMessageId = crypto.randomUUID();
     
