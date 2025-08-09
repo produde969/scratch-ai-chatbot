@@ -7,6 +7,10 @@ Hello user, I would like to thank you for your interest in using this applicatio
 
 ## Installation
 
+*WATCH THIS VIDEO INSTEAD:*
+
+https://youtu.be/1fVu3l81Bos
+
 To install and use this modified version of scratch you must have Git and Node.js installed
 
 If you would like to set-up this application, enter the following prompts in your terminal:
