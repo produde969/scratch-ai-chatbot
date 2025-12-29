@@ -19,7 +19,7 @@ import DragConstants from '../lib/drag-constants';
 import defineDynamicBlock from '../lib/define-dynamic-block';
 import {DEFAULT_THEME, getColorsForTheme, themeMap} from '../lib/themes';
 import {injectExtensionBlockTheme, injectExtensionCategoryTheme} from '../lib/themes/blockHelpers';
-import {connect} from 'react-redux'; // Make sure connect is imported
+import {connect} from 'react-redux';
 import {updateToolbox} from '../reducers/toolbox';
 import {activateColorPicker} from '../reducers/color-picker';
 import {closeExtensionLibrary, openSoundRecorder, openConnectionModal} from '../reducers/modals';
@@ -31,8 +31,8 @@ import {
     activateTab,
     SOUNDS_TAB_INDEX
 } from '../reducers/editor-tab';
-import { GoogleGenerativeAI } from '@google/generative-ai'; // This import is not used directly here, as the model is initialized via fetch.
-import html2canvas from 'html2canvas'; // This import is not used directly here, as the screenshot function is custom.
+import { GoogleGenerativeAI } from '@google/generative-ai'; // not used directly; calls proxied through backend
+import html2canvas from 'html2canvas'; // not used directly; custom screenshot fn used
 
 const addFunctionListener = (object, property, callback) => {
     const oldFn = object[property];
@@ -47,11 +47,7 @@ const DroppableBlocks = DropAreaHOC([
     DragConstants.BACKPACK_CODE
 ])(BlocksComponent);
 
-// It's important to keep API keys secure. For a real application,
-// you would use a backend to handle API calls.
-// For this example, we'll assume REACT_APP_GEMINI_API_KEY is available
-// in the environment for demonstration purposes.
-// Note: This GEMINI_API_KEY is not directly used in this file as API calls are proxied through the backend.
+// Env (not directly used here; server proxies Gemini)
 const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 
 class Blocks extends React.Component {
@@ -89,7 +85,27 @@ class Blocks extends React.Component {
             'handleGeminiInputChange',
             'handleGeminiInputSubmit',
             'handleIncludeScreenshotChange',
-            'handleAnalyzeNextMove' // Bind the new handler
+            'handleCanGeminiReadCodeChange',
+            'pipeResponseToExternalInput',
+            'simulateClickZAndFocusInput',
+            'waitForElement',
+            'tryWaitForElement',
+            'typeText',
+            'pressEnter',
+            'dispatchKeySeries',
+            'ensureKeyboardFocus',
+            'isEditable',
+            'makeFocusable',
+            'dispatchKeyEverywhere',
+            // helpers added for robust paste
+            'sleep',
+            '_isVisible',
+            '_placeCaretAtEnd',
+            '_getValue',
+            '_setReactValue',
+            '_deepQueryAll',
+            '_findInSameOriginIframes',
+            '_findExternalInputFresh'
         ]);
         this.ScratchBlocks.prompt = this.handlePromptStart;
         this.ScratchBlocks.statusButtonCallback = this.handleConnectionModalStart;
@@ -99,18 +115,18 @@ class Blocks extends React.Component {
             showGeminiChat: false,
             geminiInput: '',
             geminiOutput: [],
-            includeScreenshot: false, // New state for screenshot option
-            submitting: false // New state to prevent double submission
+            includeScreenshot: false,
+            submitting: false,
+            canGeminiReadCode: false
         };
         this.onTargetsUpdate = debounce(this.onTargetsUpdate, 100);
         this.toolboxUpdateQueue = [];
         this.geminiModel = null;
         this.initializeGemini();
         this.inputRef = React.createRef();
+        this.EXTERNAL_INPUT_SELECTOR = 'input.input_input-form_rYjUv';
     }
 
-    // This lifecycle method is used to keep the cursor at the end of the input
-    // when the Gemini chat is open and the input changes.
     componentDidUpdate(prevProps, prevState) {
         if (this.state.geminiInput !== prevState.geminiInput &&
             this.state.showGeminiChat &&
@@ -122,7 +138,377 @@ class Blocks extends React.Component {
         }
     }
 
-    // Initializes the Gemini AI model using the provided API key.
+    // ================== Robust input targeting + piping helpers ==================
+    sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    _isVisible(el) {
+        if (!el) return false;
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        const op = style.opacity === '' ? 1 : parseFloat(style.opacity);
+        return rect.width > 0 && rect.height > 0 &&
+               style.visibility !== 'hidden' &&
+               style.display !== 'none' &&
+               op > 0;
+    }
+
+    _placeCaretAtEnd(el) {
+        try {
+            if ('setSelectionRange' in el) {
+                const len = el.value?.length ?? 0;
+                el.setSelectionRange(len, len);
+            } else {
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                range.collapse(false);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        } catch {}
+    }
+
+    _getValue(el) {
+        if (!el) return '';
+        if ('value' in el) return el.value;
+        return el.textContent || '';
+    }
+
+    _setReactValue(el, value) {
+        const proto = el instanceof HTMLTextAreaElement
+            ? window.HTMLTextAreaElement.prototype
+            : window.HTMLInputElement.prototype;
+        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+        if (desc && desc.set) desc.set.call(el, value);
+        else el.value = value;
+        try {
+            el.dispatchEvent(new InputEvent('beforeinput', {
+                inputType: 'insertText', data: value, bubbles: true, composed: true, cancelable: true
+            }));
+        } catch {}
+        el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    }
+
+    _deepQueryAll(root, selector, out = []) {
+        try {
+            const els = root.querySelectorAll(selector);
+            els && els.forEach(e => out.push(e));
+        } catch {}
+        const walker = document.createNodeIterator(root, NodeFilter.SHOW_ELEMENT);
+        for (let node; (node = walker.nextNode()); ) {
+            const sr = node.shadowRoot;
+            if (sr) this._deepQueryAll(sr, selector, out);
+        }
+        return out;
+    }
+
+    _findInSameOriginIframes(selector) {
+        const frames = Array.from(document.querySelectorAll('iframe'));
+        for (const f of frames) {
+            try {
+                const doc = f.contentDocument;
+                if (!doc) continue;
+                const matches = this._deepQueryAll(doc, selector);
+                if (matches?.length) {
+                    const best = matches.find(this._isVisible) || matches[0];
+                    if (best) return best;
+                }
+            } catch {
+                // cross-origin: ignore
+            }
+        }
+        return null;
+    }
+
+    _findExternalInputFresh() {
+        const selectors = [
+            'input.input_input-form_rYjUv',
+            'textarea.input_input-form_rYjUv',
+            '[role="textbox"].input_input-form_rYjUv',
+            'div.input_input-form_rYjUv[contenteditable="true"]',
+            // generic fallbacks
+            'input[type="text"]:not([disabled])',
+            'textarea:not([disabled])',
+            '[contenteditable="true"]',
+            '[role="textbox"]'
+        ];
+
+        for (const sel of selectors) {
+            const all = this._deepQueryAll(document, sel);
+            const cand = (all.find(this._isVisible) || all[0]);
+            if (cand) return cand;
+        }
+        for (const sel of selectors) {
+            const cand = this._findInSameOriginIframes(sel);
+            if (cand) return cand;
+        }
+        const ae = document.activeElement;
+        if (this.isEditable(ae)) return ae;
+        return null;
+    }
+    // ================== /helpers ==================
+
+    // Focus plumbing
+    async ensureKeyboardFocus() {
+        const ae = document.activeElement;
+        if (this.isEditable(ae)) { try { ae.blur(); } catch {} }
+        await new Promise(r => requestAnimationFrame(r));
+        const root = this.makeFocusable(document.body || document.documentElement);
+        if (root) { try { root.focus({ preventScroll: true }); } catch {} }
+        await new Promise(r => setTimeout(r, 10));
+    }
+
+    isEditable(el) {
+        if (!el) return false;
+        const tag = (el.tagName || '').toUpperCase();
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+        if (el.getAttribute && el.getAttribute('role') === 'textbox') return true;
+        if ('isContentEditable' in el && el.isContentEditable) return true;
+        return false;
+    }
+
+    makeFocusable(el) {
+        if (!el || typeof el.focus !== 'function') return null;
+        if (!el.hasAttribute('tabindex')) {
+            try { el.setAttribute('tabindex', '-1'); } catch {}
+        }
+        return el;
+    }
+
+    dispatchKeyEverywhere(key, code = 'KeyA') {
+        const inferKeyCode = () => {
+            if (key === 'Enter') return 13;
+            if (key === ' ') return 32;
+            if (key && key.length === 1) return key.toUpperCase().charCodeAt(0);
+            return 0;
+        };
+        const k = inferKeyCode();
+        const fire = (target, type) => {
+            if (!target || !target.dispatchEvent) return;
+            try {
+                const ev = new KeyboardEvent(type, {
+                    key, code, keyCode: k, which: k, bubbles: true, composed: true, cancelable: true
+                });
+                target.dispatchEvent(ev);
+            } catch {}
+        };
+        const targets = [window, document, document.body, document.activeElement].filter(Boolean);
+        for (const t of targets) {
+            fire(t, 'keydown'); fire(t, 'keypress'); fire(t, 'keyup');
+        }
+    }
+
+    async waitForElement(selector, timeoutMs = 6000, mustBeVisible = true) {
+        const deadline = performance.now() + timeoutMs;
+        const isVisible = el => {
+            if (!el) return false;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0 &&
+                   style.visibility !== 'hidden' && style.display !== 'none';
+        };
+
+        const searchOnce = () => {
+            let el = document.querySelector(selector);
+            if (el && (!mustBeVisible || isVisible(el))) return el;
+
+            const iframes = Array.from(document.querySelectorAll('iframe'));
+            for (const frame of iframes) {
+                try {
+                    const doc = frame.contentDocument;
+                    if (!doc) continue;
+                    const cand = doc.querySelector(selector);
+                    if (cand && (!mustBeVisible || isVisible(cand))) return cand;
+                } catch {}
+            }
+            return null;
+        };
+
+        while (performance.now() < deadline) {
+            const found = searchOnce();
+            if (found) return found;
+            await new Promise(r => setTimeout(r, 50));
+        }
+        throw new Error(`Element not found or not visible: ${selector}`);
+    }
+
+    async tryWaitForElement(selector, timeoutMs = 1500, mustBeVisible = true) {
+        try { return await this.waitForElement(selector, timeoutMs, mustBeVisible); }
+        catch { return null; }
+    }
+
+    dispatchKeySeries(target, key, code = 'KeyA', keyCode) {
+        const infer = () => {
+            if (typeof keyCode === 'number') return keyCode;
+            if (key === 'Enter') return 13;
+            if (key === ' ') return 32;
+            if (key && key.length === 1) return key.toUpperCase().charCodeAt(0);
+            return 0;
+        };
+        const k = infer();
+        const base = { key, code, keyCode: k, which: k, bubbles: true, composed: true };
+        target.dispatchEvent(new KeyboardEvent('keydown', base));
+        target.dispatchEvent(new KeyboardEvent('keypress', base));
+        target.dispatchEvent(new KeyboardEvent('keyup', base));
+    }
+
+    // === UPDATED: open overlay with 'z', then locate FRESH input every time ===
+    async simulateClickZAndFocusInput() {
+        await this.ensureKeyboardFocus();
+
+        const candidates = [
+            '[data-key="z"]','[data-key="Z"]','[aria-label="z"]','[aria-label="Z"]','.key-z','.KeyZ'
+        ];
+        let zEl = null;
+        for (const sel of candidates) {
+            const el = document.querySelector(sel);
+            if (el) { zEl = el; break; }
+        }
+        if (zEl) zEl.click();
+        else this.dispatchKeyEverywhere('z', 'KeyZ');
+
+        // Let UI render (double rAF + small wait)
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        await this.sleep(30);
+
+        let input = this._findExternalInputFresh();
+        if (!input) throw new Error('Target textbox not found after pressing "z".');
+
+        this.makeFocusable(input);
+        try { input.focus({ preventScroll: true }); } catch {}
+        this._placeCaretAtEnd(input);
+        await this.sleep(10);
+        return input;
+    }
+
+    // Use native setter so React sees change
+    setNativeValue(el, value) {
+        const proto = el instanceof HTMLTextAreaElement
+            ? window.HTMLTextAreaElement.prototype
+            : window.HTMLInputElement.prototype;
+        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+        if (desc && desc.set) desc.set.call(el, value);
+        else el.value = value;
+    }
+
+    async typeText(inputEl, text, perCharDelayMs = 6) {
+        inputEl.focus();
+        if ('value' in inputEl) {
+            this.setNativeValue(inputEl, '');
+            inputEl.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        } else {
+            inputEl.textContent = '';
+            inputEl.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
+        }
+
+        for (const ch of text) {
+            if ('value' in inputEl) {
+                this.setNativeValue(inputEl, inputEl.value + ch);
+                inputEl.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+            } else {
+                inputEl.textContent = (inputEl.textContent || '') + ch;
+                inputEl.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: ch }));
+            }
+            const code = /^[a-z]$/i.test(ch) ? `Key${ch.toUpperCase()}` : (ch === ' ' ? 'Space' : '');
+            this.dispatchKeySeries(inputEl, ch, code);
+            await new Promise(r => setTimeout(r, perCharDelayMs));
+        }
+    }
+
+    async pressEnter(inputEl) {
+        this.dispatchKeySeries(inputEl, 'Enter', 'Enter', 13);
+        if (inputEl.form) {
+            inputEl.form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        }
+        const scope = inputEl.form || document;
+        const selectors = ['[type="submit"]','button[type="submit"]','button[aria-label="Send"]','[data-testid="send"]'];
+        for (const sel of selectors) {
+            const btn = scope.querySelector(sel);
+            if (btn && !btn.disabled) { btn.click(); return; }
+        }
+        const buttons = Array.from(scope.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]'));
+        const sendBtn = buttons.find(b => (b.innerText || b.value || '').trim().toLowerCase() === 'send');
+        if (sendBtn && !sendBtn.disabled) sendBtn.click();
+    }
+
+    // === UPDATED: robust piping with re-find, shadow DOM, verification, backoff ===
+    async pipeResponseToExternalInput(text) {
+        try {
+            await this.simulateClickZAndFocusInput();
+
+            const waits = [20, 50, 100, 200, 400, 800];
+
+            const tryOnce = async () => {
+                let el = this._findExternalInputFresh();
+                if (!el) return false;
+
+                this.makeFocusable(el);
+                try { el.click(); } catch {}
+                try { el.focus({ preventScroll: true }); } catch {}
+                this._placeCaretAtEnd(el);
+                await this.sleep(10);
+
+                const before = this._getValue(el);
+
+                if (window.electronAPI?.insertText) {
+                    await window.electronAPI.insertText(text);
+                } else if (window.electronAPI?.writeClipboard) {
+                    await window.electronAPI.writeClipboard(text);
+                    if (window.electronAPI?.pasteFocused) {
+                        await window.electronAPI.pasteFocused();
+                    } else if (document.execCommand) {
+                        document.execCommand('paste');
+                    } else {
+                        await this.typeText(el, text);
+                    }
+                } else {
+                    await this.typeText(el, text);
+                }
+
+                await this.sleep(10);
+                el = this._findExternalInputFresh() || el;
+                const after = this._getValue(el);
+
+                const ok = typeof after === 'string' && (
+                    after.endsWith(text) || after.includes(text) ||
+                    after.length >= Math.max(before.length, text.length)
+                );
+
+                if (!ok) {
+                    this._setReactValue(el, text);
+                    await this.sleep(5);
+                    const reAfter = this._getValue(el);
+                    return typeof reAfter === 'string' && (reAfter.endsWith(text) || reAfter.includes(text));
+                }
+                return true;
+            };
+
+            let success = false;
+            for (const w of waits) {
+                success = await tryOnce();
+                if (success) break;
+                await this.sleep(w);
+            }
+            if (!success) success = await tryOnce();
+
+            if (success) {
+                await this.sleep(30);
+                if (window.electronAPI?.pressEnter) {
+                    await window.electronAPI.pressEnter();
+                } else {
+                    const el = this._findExternalInputFresh() || document.activeElement || document.body;
+                    await this.pressEnter(el);
+                }
+            } else {
+                console.warn('⚠️ Could not verify text insertion after retries; skipping Enter to avoid empty submit.');
+            }
+        } catch (e) {
+            console.warn('Auto-typing into external input failed:', e);
+        }
+    }
+    // ================== END robust piping ==================
+
+    // Gemini bootstrap (proxied to localhost:3001)
     initializeGemini() {
         this.geminiModel = {
             generateContent: async ({ contents }) => {
@@ -144,54 +530,46 @@ class Blocks extends React.Component {
                 const data = await response.json();
                 if (!data.message) throw new Error("Gemini backend returned no message field");
                 return {
-                    response: {
-                        text: () => data.message
-                    }
+                    response: { text: () => data.message }
                 };
             }
         };
     }
 
-    // Handles changes to the Gemini input text field.
     handleGeminiInputChange(e) {
         this.setState({ geminiInput: e.target.value });
     }
 
-    // Handles changes to the "Include Screenshot" checkbox.
     handleIncludeScreenshotChange(e) {
         this.setState({ includeScreenshot: e.target.checked });
     }
 
-    // Handles the submission of the Gemini input, either by Enter key or button click.
+    handleCanGeminiReadCodeChange(e) {
+        this.setState({ canGeminiReadCode: e.target.checked });
+    }
+
     async handleGeminiInputSubmit(e) {
-        // Prevent default form submission behavior (e.g., if input is inside a form)
-        // and prevent the click event from propagating if it's already handled by onKeyDown
         if (e.key === 'Enter' || e.type === 'click') {
             e.preventDefault();
         } else {
-            // Only proceed if it's an Enter key press or a click event
             return;
         }
 
         const userInput = this.inputRef.current?.value.trim();
         if (!userInput) return;
 
-        // Prevent double submission
         if (this.state.submitting) {
             console.log("Submission already in progress, ignoring.");
             return;
         }
 
-        this.setState({ submitting: true }); // Set submitting flag
+        this.setState({ submitting: true });
 
-        // Generate unique IDs for messages
         const userMessageId = crypto.randomUUID();
         const thinkingMessageId = crypto.randomUUID();
 
-        // Clear the input field immediately
         if (this.inputRef.current) this.inputRef.current.value = '';
 
-        // Display user message and "Thinking..." message
         this.setState(prevState => ({
             geminiOutput: [
                 ...prevState.geminiOutput,
@@ -207,14 +585,13 @@ class Blocks extends React.Component {
                         ? { ...msg, type: 'error', message: 'Gemini model is not initialized.' }
                         : msg
                 ),
-                submitting: false // Reset submitting flag
+                submitting: false
             }));
             return;
         }
 
         let screenshotBase64 = null;
         if (this.state.includeScreenshot) {
-            // Update user message to indicate screenshot is included
             this.setState(prevState => ({
                 geminiOutput: prevState.geminiOutput.map(msg =>
                     msg.id === userMessageId
@@ -225,7 +602,7 @@ class Blocks extends React.Component {
             screenshotBase64 = await captureCanvasScreenshotWithRetry();
         }
 
-        // Extract VM context to provide to Gemini for better understanding.
+        // (Optional) context to send with prompt
         const target = this.props.vm.editingTarget;
         let contextText = 'Project context:\n';
         if (target) {
@@ -245,56 +622,41 @@ class Blocks extends React.Component {
             contextText += '(No active target found)\n';
         }
 
-        // Function to capture a screenshot of the Scratch canvas.
-        // It retries multiple times to ensure a non-black image is captured.
+        // Screenshot helpers inside handler scope (used when includeScreenshot is on)
         async function captureCanvasScreenshot() {
             try {
-                // Select the main canvas element used by Scratch.
                 const canvas = document.querySelector('.stage-wrapper canvas, .stage-and-target-wrapper canvas, .scratch-stage canvas, canvas');
                 if (!canvas) {
                     console.warn("⚠️ WebGL canvas not found in known containers.");
                     return null;
                 }
-
-                // Flush WebGL context to ensure all drawing commands are executed.
                 const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
                 if (gl) gl.flush();
 
-                // Wait for rendering to complete (two requestAnimationFrame calls)
                 await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-                // Add a small timeout for good measure, allowing the browser to fully render.
                 await new Promise(resolve => setTimeout(resolve, 100));
 
-                // Create an offscreen canvas to draw the screenshot.
                 const offscreen = document.createElement('canvas');
                 offscreen.width = canvas.width;
                 offscreen.height = canvas.height;
                 const ctx = offscreen.getContext('2d');
                 ctx.drawImage(canvas, 0, 0);
 
-                // Check if the captured image is entirely black (common issue with WebGL screenshots).
                 const data = ctx.getImageData(0, 0, offscreen.width, offscreen.height).data;
                 const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
-                if (isBlack) {
-                    console.warn("⚠️ Screenshot is completely black.");
-                }
+                if (isBlack) console.warn("⚠️ Screenshot is completely black.");
 
-                // Convert the canvas content to a base64 PNG data URL.
                 const base64 = offscreen.toDataURL('image/png').split(',')[1];
-                console.log("✅ Screenshot captured after render wait");
                 return base64;
             } catch (err) {
                 console.error("❌ Screenshot capture failed:", err);
                 return null;
             }
         }
-
-        // Retries screenshot capture to ensure a valid (non-black) image.
-        async function captureCanvasScreenshotWithRetry(maxAttempts = 200, delay = 0.1) { // Reduced attempts and delay for better performance
+        async function captureCanvasScreenshotWithRetry(maxAttempts = 200, delay = 0.1) {
             for (let attempt = 0; attempt < maxAttempts; attempt++) {
                 const base64 = await captureCanvasScreenshot();
                 if (base64) {
-                    // Decode to check if image is not fully black
                     const img = new Image();
                     img.src = 'data:image/png;base64,' + base64;
                     await new Promise(resolve => (img.onload = resolve));
@@ -305,10 +667,7 @@ class Blocks extends React.Component {
                     ctx.drawImage(img, 0, 0);
                     const data = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
                     const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
-                    if (!isBlack) {
-                        console.log(`✅ Successful screenshot on attempt ${attempt + 1}`);
-                        return base64;
-                    }
+                    if (!isBlack) return base64;
                 }
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
@@ -316,25 +675,43 @@ class Blocks extends React.Component {
             return null;
         }
 
-        //if you would like to remove the filter, remove the filterInstruction and wrappedPrompt variables
-        const filterInstruction = "You are a kind, caring, and helpful AI assistant. A child has entered the prompt I will be eventually giving you. Please ensure that your responses are all child safe and do not contain any terms that may harm the child in any way. If you are unsure about a response, please ask the child to clarify what they mean. Do not use any terms that may be considered inappropriate for children. If you are asked to do something that is not child safe, please refuse and explain why it is not appropriate while also not saying anything innapropriate for children. thank you very much for your help, here is their response. only respond to the prompt. USE THE SAME LOGIC IF GIVEN AN IMAGE, IF YOU DEEM AN IMAGE INNAPROPRIATE AND RECEIVE EVIDENCE THROUGH THE IMAGE THAT IT IS INNAPROPRIATE USE THE SAME LOGIC FROM RESPONSES ONTO THE IMAGE. Thank you once again for your help";
+        // child-safe wrapper (kept as-is from your code)
+        const filterInstruction = "You are a kind, caring, and helpful AI assistant. A child has entered the prompt I will be eventually giving you. Please ensure that your responses are all child safe and do not contain any terms that may harm the child in any way. If you are unsure about a response, please ask the child to clarify what they mean. Do not use any terms that may be considered inappropriate for children. If you are asked to do something that is not child safe, please refuse and explain why it is not appropriate while also not saying anything inappropriate for children. thank you very much for your help, here is their response. only respond to the prompt. USE THE SAME LOGIC IF GIVEN AN IMAGE, IF YOU DEEM AN IMAGE INAPPROPRIATE AND RECEIVE EVIDENCE THROUGH THE IMAGE THAT IT IS INAPPROPRIATE USE THE SAME LOGIC FROM RESPONSES ONTO THE IMAGE. Thank you once again for your help";
 
         const wrappedPrompt =
         `<text>${userInput}</text>\n` +
         `<send_to_gemini>${filterInstruction}</send_to_gemini>`;
 
-        const parts = [{ text: userInput }];
-        if (screenshotBase64) {
-            parts.push({
-                inlineData: {
-                    mimeType: "image/png",
-                    data: screenshotBase64
+        // Build system / tutoring instructions + optional project JSON context
+        const tutorInstructions = `Please answer the student's prompt based on the provided source code if source code is provided.`;
+
+        let contextTextForGemini = '';
+        if (this.state.canGeminiReadCode) {
+            try {
+                const projectJsonObj = this.props.vm && typeof this.props.vm.toJSON === 'function' ? this.props.vm.toJSON() : null;
+                if (projectJsonObj) {
+                    const projectJson = JSON.stringify(projectJsonObj);
+                    const MAX_CHARS = 20000;
+                    let projectPayload = projectJson;
+                    if (projectJson.length > MAX_CHARS) {
+                        projectPayload = projectJson.slice(0, MAX_CHARS) + `\n...TRUNCATED (${projectJson.length - MAX_CHARS} chars)`;
+                    }
+                    contextTextForGemini = `CONTEXT: The following is the student's Scratch project in JSON form. Use it to answer the question specifically.\n\nCODE:\n${projectPayload}\n\n`;
+                } else {
+                    contextTextForGemini = 'CONTEXT: (Could not export project JSON)\n\n';
                 }
-            });
+            } catch (err) {
+                console.warn('Could not stringify VM project JSON for Gemini:', err);
+                contextTextForGemini = 'CONTEXT: (Error exporting project JSON)\n\n';
+            }
+        }
+
+        const parts = [{ text: `${tutorInstructions}\n\n${filterInstruction}\n\n${contextTextForGemini}STUDENT QUESTION: ${userInput}` }];
+        if (screenshotBase64) {
+            parts.push({ inlineData: { mimeType: "image/png", data: screenshotBase64 } });
         }
 
         try {
-            // Call the Gemini API to generate content.
             let response;
             try {
                 const result = await this.geminiModel.generateContent({ contents: [{ role: "user", parts }] });
@@ -347,61 +724,6 @@ class Blocks extends React.Component {
             }
 
             const text = response.text();
-
-            // Update state with Gemini's response, replacing the thinking message.
-            this.setState(prevState => ({
-                geminiOutput: prevState.geminiOutput.map(msg =>
-                    msg.id === thinkingMessageId
-                        ? { ...msg, type: 'gemini', message: text }
-                        : msg
-                ),
-                submitting: false // Reset submitting flag
-            }));
-        } catch (error) {
-            console.error("Gemini error:", error);
-            // Display error message if the API call fails, replacing the thinking message.
-            this.setState(prevState => ({
-                geminiOutput: prevState.geminiOutput.map(msg =>
-                    msg.id === thinkingMessageId
-                        ? { ...msg, type: 'error', message: `Gemini: Error: ${error.message}` }
-                        : msg
-                ),
-                submitting: false // Reset submitting flag
-            }));
-        }
-    }
-
-    async handleAnalyzeNextMove() {
-        if (this.state.submitting) return;
-        this.setState({ submitting: true });
-    
-        const userInput = "What is the best move? Please Write using  the following format, C4C5 is an example. C4 representing the starting square and  C5 representing the square that I want the  piece to go to. LOOK VERY CAREFULLY AT PIECE'S AND THEIR COORDINATES ON THE BOARD. ONLY PROVIDE THE NOTATION, NOTHING ELSE";
-        const userMessageId = crypto.randomUUID();
-        const thinkingMessageId = crypto.randomUUID();
-    
-        this.setState(prevState => ({
-                geminiOutput: [
-                    ...prevState.geminiOutput,
-                    { id: userMessageId, type: 'user', message: '(Analyzing board...)', hasScreenshot: true, timestamp: Date.now() },
-                { id: thinkingMessageId, type: 'gemini-thinking', message: 'Gemini: Thinking...', timestamp: Date.now() }
-            ]
-        }));
-    
-        const screenshotBase64 = await this.captureCanvasScreenshotWithRetry();
-        const parts = [{ text: userInput }];
-        if (screenshotBase64) {
-            parts.push({
-                inlineData: {
-                    mimeType: "image/png",
-                    data: screenshotBase64
-                }
-            });
-        }
-    
-        try {
-            const result = await this.geminiModel.generateContent({ contents: [{ role: 'user', parts }] });
-            const text = result?.response?.text();
-    
             this.setState(prevState => ({
                 geminiOutput: prevState.geminiOutput.map(msg =>
                     msg.id === thinkingMessageId ? { ...msg, type: 'gemini', message: text } : msg
@@ -409,7 +731,7 @@ class Blocks extends React.Component {
                 submitting: false
             }));
         } catch (error) {
-            console.error('Gemini error:', error);
+            console.error("Gemini error:", error);
             this.setState(prevState => ({
                 geminiOutput: prevState.geminiOutput.map(msg =>
                     msg.id === thinkingMessageId
@@ -420,8 +742,10 @@ class Blocks extends React.Component {
             }));
         }
     }
-    
-    // Add the retry screenshot function to the class:
+
+
+
+    // Class-level screenshot retry (used by Analyze Next Move)
     captureCanvasScreenshotWithRetry = async (maxAttempts = 200, delay = 0.1) => {
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
             const base64 = await this.captureCanvasScreenshot();
@@ -436,18 +760,14 @@ class Blocks extends React.Component {
                 ctx.drawImage(img, 0, 0);
                 const data = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
                 const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
-                if (!isBlack) {
-                    console.log(`✅ Successful screenshot on attempt ${attempt + 1}`);
-                    return base64;
-                }
+                if (!isBlack) return base64;
             }
             await new Promise(resolve => setTimeout(resolve, delay));
         }
         console.warn("⚠️ All screenshot attempts resulted in black images.");
         return null;
     };
-    
-    // Add the screenshot capture function to the class:
+
     captureCanvasScreenshot = async () => {
         try {
             const canvas = document.querySelector('.stage-wrapper canvas, .stage-and-target-wrapper canvas, .scratch-stage canvas, canvas');
@@ -457,30 +777,27 @@ class Blocks extends React.Component {
             }
             const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
             if (gl) gl.flush();
-    
+
             await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
             await new Promise(resolve => setTimeout(resolve, 100));
-    
+
             const offscreen = document.createElement('canvas');
             offscreen.width = canvas.width;
             offscreen.height = canvas.height;
             const ctx = offscreen.getContext('2d');
             ctx.drawImage(canvas, 0, 0);
-    
+
             const data = ctx.getImageData(0, 0, offscreen.width, offscreen.height).data;
             const isBlack = data.every((val, idx) => val === 0 || (idx + 1) % 4 === 0);
-            if (isBlack) {
-                console.warn("⚠️ Screenshot is completely black.");
-            }
-    
+            if (isBlack) console.warn("⚠️ Screenshot is completely black.");
+
             const base64 = offscreen.toDataURL('image/png').split(',')[1];
-            console.log("✅ Screenshot captured after render wait");
             return base64;
         } catch (err) {
             console.error("❌ Screenshot capture failed:", err);
             return null;
         }
-    };    
+    };
 
     componentDidMount () {
         this.ScratchBlocks = VMScratchBlocks(this.props.vm, this.props.useCatBlocks);
@@ -523,8 +840,7 @@ class Blocks extends React.Component {
             this.setLocale();
         }
 
-        // Patch the canvas getContext to preserve drawing buffer,
-        // which is necessary for screenshot capture.
+        // Patch WebGL getContext for screenshots
         const canvas = document.querySelector('.stage-wrapper canvas');
         if (canvas && !canvas._patched) {
             const oldGetContext = canvas.getContext;
@@ -542,7 +858,6 @@ class Blocks extends React.Component {
     }
 
     shouldComponentUpdate (nextProps, nextState) {
-        // Optimize re-renders by checking only relevant props and state.
         return (
             this.state.prompt !== nextState.prompt ||
             this.props.isVisible !== nextProps.isVisible ||
@@ -553,29 +868,25 @@ class Blocks extends React.Component {
             this.props.anyModalVisible !== nextProps.anyModalVisible ||
             this.props.stageSize !== nextProps.stageSize ||
             this.state.showGeminiChat !== nextState.showGeminiChat ||
-            this.state.includeScreenshot !== nextState.includeScreenshot || // Include new state
-            this.state.geminiOutput !== nextState.geminiOutput || // Include geminiOutput for chat updates
-            this.state.submitting !== nextState.submitting // Include submitting state
+            this.state.includeScreenshot !== nextState.includeScreenshot ||
+            this.state.geminiOutput !== nextState.geminiOutput ||
+            this.state.submitting !== nextState.submitting
         );
     }
 
     componentDidUpdate (prevProps) {
-        // Hide ScratchBlocks chaff (e.g., context menus) when any modal is visible.
         if (this.props.anyModalVisible && !prevProps.anyModalVisible) {
             this.ScratchBlocks.hideChaff();
         }
-        // Request toolbox update if visibility is true and toolbox XML has changed.
         if (this.props.isVisible && this.props.toolboxXML !== this._renderedToolboxXML) {
             this.requestToolboxUpdate();
         }
-        // If visibility hasn't changed, but stage size has, dispatch resize event.
         if (this.props.isVisible === prevProps.isVisible) {
             if (this.props.stageSize !== prevProps.stageSize) {
                 window.dispatchEvent(new Event('resize'));
             }
             return;
         }
-        // Handle visibility changes for the workspace.
         if (this.props.isVisible) {
             this.workspace.setVisible(true);
             if (prevProps.locale !== this.props.locale || this.props.locale !== this.props.vm.getLocale()) {
@@ -648,9 +959,7 @@ class Blocks extends React.Component {
 
     attachVM () {
         this.workspace.addChangeListener(this.props.vm.blockListener);
-        this.flyoutWorkspace = this.workspace
-            .getFlyout()
-            .getWorkspace();
+        this.flyoutWorkspace = this.workspace.getFlyout().getWorkspace();
         this.flyoutWorkspace.addChangeListener(this.props.vm.flyoutBlockListener);
         this.flyoutWorkspace.addChangeListener(this.props.vm.monitorBlockListener);
         this.props.vm.addListener('SCRIPT_GLOW_ON', this.onScriptGlowOn);
@@ -850,21 +1159,20 @@ class Blocks extends React.Component {
         });
     }
 
-    setBlocks (blocks) {
-        this.blocks = blocks;
-    }
+    setBlocks (blocks) { this.blocks = blocks; }
 
     handlePromptStart (message, defaultValue, callback, optTitle, optVarType) {
         const p = {prompt: {callback, message, defaultValue}};
         p.prompt.title = optTitle ? optTitle :
             this.ScratchBlocks.Msg.VARIABLE_MODAL_TITLE;
-        p.prompt.varType = typeof optVarType === 'string' ?
-            optVarType : this.ScratchBlocks.SCALAR_VARIABLE_TYPE;
+        p.prompt.varType = typeof optVarType === 'string'
+            ? optVarType : this.ScratchBlocks.SCALAR_VARIABLE_TYPE;
         p.prompt.showVariableOptions =
             optVarType !== this.ScratchBlocks.BROADCAST_MESSAGE_VARIABLE_TYPE &&
             p.prompt.title !== this.ScratchBlocks.Msg.RENAME_VARIABLE_MODAL_TITLE &&
             p.prompt.title !== this.ScratchBlocks.Msg.RENAME_LIST_MODAL_TITLE;
-        p.prompt.showCloudOption = (optVarType === this.ScratchBlocks.SCALAR_VARIABLE_TYPE) && this.props.canUseCloud;
+        p.prompt.showCloudOption =
+            (optVarType === this.ScratchBlocks.SCALAR_VARIABLE_TYPE) && this.props.canUseCloud;
         this.setState(p);
     }
 
@@ -909,11 +1217,8 @@ class Blocks extends React.Component {
             });
     }
 
-    // Toggles the visibility of the Gemini chat interface.
     toggleGeminiChat () {
-        this.setState(prevState => ({
-            showGeminiChat: !prevState.showGeminiChat
-        }));
+        this.setState(prevState => ({ showGeminiChat: !prevState.showGeminiChat }));
     }
 
     render () {
@@ -934,23 +1239,19 @@ class Blocks extends React.Component {
             onRequestCloseCustomProcedures,
             toolboxXML,
             updateMetrics: updateMetricsProp,
-            updateToolboxState, // Destructure this prop so it's not passed to DOM element
+            updateToolboxState,
             useCatBlocks,
             workspaceMetrics,
-            ...props // Capture remaining props
+            ...props
         } = this.props;
 
-        // Filter out props that are not valid for DOM elements
         const filteredProps = Object.keys(props).reduce((acc, key) => {
-            if (!['onActivateCustomProcedures'].includes(key)) { // Add other props to filter if needed
-                acc[key] = props[key];
-            }
+            if (!['onActivateCustomProcedures'].includes(key)) acc[key] = props[key];
             return acc;
         }, {});
 
         return (
             <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-                {/* Button to toggle Gemini chat visibility */}
                 <div
                     onClick={this.toggleGeminiChat}
                     style={{
@@ -976,15 +1277,14 @@ class Blocks extends React.Component {
                     {this.state.showGeminiChat ? '▲ Close Gemini Chat' : '▼ Talk to Gemini'}
                 </div>
 
-                {/* Gemini Chat Interface */}
                 {this.state.showGeminiChat && (
                     <div
                         style={{
                             position: 'absolute',
-                            top: '50px', // Position below the toggle button
+                            top: '50px',
                             left: 311.5,
                             right: 0,
-                            height: 'calc(100% - 50px)', // Adjust height
+                            height: 'calc(100% - 50px)',
                             backgroundColor: '#f0f0f0',
                             border: '1px solid #ccc',
                             borderRadius: '8px',
@@ -995,7 +1295,6 @@ class Blocks extends React.Component {
                             padding: '10px'
                         }}
                     >
-                        {/* Chat output area */}
                         <div style={{
                             flexGrow: 1,
                             overflowY: 'auto',
@@ -1019,18 +1318,27 @@ class Blocks extends React.Component {
                             ))}
                         </div>
 
-                        {/* Input field and screenshot option */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <input
-                                    type="checkbox"
-                                    id="includeScreenshot"
-                                    checked={this.state.includeScreenshot}
-                                    onChange={this.handleIncludeScreenshotChange}
-                                    style={{ transform: 'scale(1.2)' }}
-                                />
-                                <label htmlFor="includeScreenshot" style={{ fontSize: '14px', color: '#555' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', color: '#555' }}>
+                                    <input
+                                        type="checkbox"
+                                        id="includeScreenshot"
+                                        checked={this.state.includeScreenshot}
+                                        onChange={this.handleIncludeScreenshotChange}
+                                        style={{ transform: 'scale(1.2)' }}
+                                    />
                                     Include screenshot with message
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', color: '#555' }}>
+                                    <input
+                                        type="checkbox"
+                                        id="canGeminiReadCode"
+                                        checked={this.state.canGeminiReadCode}
+                                        onChange={this.handleCanGeminiReadCodeChange}
+                                        style={{ transform: 'scale(1.2)' }}
+                                    />
+                                    Allow Gemini to see my blocks (Best for debugging)
                                 </label>
                             </div>
                             <div style={{ display: 'flex', gap: '5px' }}>
@@ -1049,7 +1357,6 @@ class Blocks extends React.Component {
                                 />
                                 <button
                                     onClick={this.handleGeminiInputSubmit}
-                                    // Disable button while submitting to prevent multiple clicks
                                     disabled={this.state.submitting}
                                     style={{
                                         padding: '8px 15px',
@@ -1063,22 +1370,7 @@ class Blocks extends React.Component {
                                 >
                                     Send
                                 </button>
-                                <button
-                                onClick={this.handleAnalyzeNextMove}
-                                disabled={this.state.submitting}
-                                style={{
-                                    marginTop: '10px',
-                                    padding: '8px 15px',
-                                    backgroundColor: '#28a745',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '4px',
-                                    cursor: this.state.submitting ? 'not-allowed' : 'pointer',
-                                    width: 'fit-content'
-                                }}
-                            >
-                                Gemini Makes Move
-                            </button>
+
                             </div>
                         </div>
                     </div>
@@ -1217,7 +1509,6 @@ const mapDispatchToProps = dispatch => ({
     updateMetrics: metrics => dispatch(updateMetrics(metrics))
 });
 
-//Export the connected component as default
 export default connect(
     mapStateToProps,
     mapDispatchToProps
