@@ -545,7 +545,17 @@ class Blocks extends React.Component {
     }
 
     handleCanGeminiReadCodeChange(e) {
-        this.setState({ canGeminiReadCode: e.target.checked });
+        const checked = e.target.checked;
+        this.setState(prevState => {
+            const geminiOutput = [...prevState.geminiOutput];
+            for (let i = geminiOutput.length - 1; i >= 0; i--) {
+                if (geminiOutput[i].type === 'user') {
+                    geminiOutput[i] = { ...geminiOutput[i], hasSource: checked };
+                    break;
+                }
+            }
+            return { canGeminiReadCode: checked, geminiOutput };
+        });
     }
 
     async handleGeminiInputSubmit(e) {
@@ -573,7 +583,7 @@ class Blocks extends React.Component {
         this.setState(prevState => ({
             geminiOutput: [
                 ...prevState.geminiOutput,
-                { id: userMessageId, type: 'user', message: userInput, hasScreenshot: false, timestamp: Date.now() },
+                { id: userMessageId, type: 'user', message: userInput, hasScreenshot: false, hasSource: this.state.canGeminiReadCode, timestamp: Date.now() },
                 { id: thinkingMessageId, type: 'gemini-thinking', message: 'Gemini: Thinking...', timestamp: Date.now() }
             ]
         }));
@@ -1308,7 +1318,7 @@ class Blocks extends React.Component {
                                 <div key={chatItem.id} style={{ marginBottom: '8px' }}>
                                     {chatItem.type === 'user' && (
                                         <strong style={{ color: '#007bff' }}>
-                                            User: {chatItem.hasScreenshot && '(with screenshot) '}
+                                            User: {chatItem.hasScreenshot && '(with screenshot) '}{chatItem.hasSource && '(with source code) '}
                                         </strong>
                                     )}
                                     {chatItem.type === 'gemini' && <strong style={{ color: '#28a745' }}>Gemini: </strong>}
@@ -1338,7 +1348,8 @@ class Blocks extends React.Component {
                                         onChange={this.handleCanGeminiReadCodeChange}
                                         style={{ transform: 'scale(1.2)' }}
                                     />
-                                    Allow Gemini to see my blocks (Best for debugging)
+                                    <span>Allow Gemini to see my blocks (Best for debugging)</span>
+                                    {this.state.canGeminiReadCode && <span style={{ color: '#28a745', fontWeight: 'bold', marginLeft: '6px' }}>(enabled)</span>}
                                 </label>
                             </div>
                             <div style={{ display: 'flex', gap: '5px' }}>
